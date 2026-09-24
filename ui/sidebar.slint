@@ -145,6 +145,7 @@ export component Sidebar inherits Rectangle {
     in property <int> selected;
     in property <int> total-unread;
     in property <bool> dark;
+    in property <string> version;
     callback select(int);
     callback add();
     callback remove(int, string);
@@ -186,6 +187,14 @@ export component Sidebar inherits Rectangle {
                     font-size: 34px;
                     letter-spacing: -1px;
                     color: Theme.accent;
+                }
+                if root.version != "": Text {
+                    text: "v" + root.version;
+                    font-family: Fonts.sans;
+                    font-weight: 500;
+                    font-size: 10px;
+                    letter-spacing: 0.6px;
+                    color: Theme.text-faint;
                 }
                 Rectangle {
                     height: 2px;

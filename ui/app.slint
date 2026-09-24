@@ -45,6 +45,7 @@ export component AppWindow inherits Window {
     in property <string> view-title: "All articles";
     in property <string> status-text;
     in property <string> today;
+    in property <string> version;
     in property <bool> adding;
     in-out property <string> add-error;
 
@@ -141,6 +142,7 @@ export component AppWindow inherits Window {
                 selected: root.selected-feed;
                 total-unread: root.total-unread;
                 dark: Theme.dark;
+                version: root.version;
                 select(id) => { root.select(id); }
                 add => { root.open-add-dialog(); }
                 remove(id, name) => { confirm.ask(id, name); }

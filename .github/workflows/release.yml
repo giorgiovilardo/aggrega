@@ -1,0 +1,59 @@
+# Builds an Arch Linux binary whenever a version tag (v0.0.1, v1.2.3, ...) is pushed.
+# The tag becomes the app version: Cargo.toml is rewritten before the build, so
+# `CARGO_PKG_VERSION` (shown in the sidebar) matches the tag.
+name: Release build
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rust pkgconf \
+            fontconfig freetype2 libxkbcommon wayland libglvnd \
+            libx11 libxcursor libxi libxrandr
+
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Only the [package] version line (the first `version =` in the file).
+          sed -i "0,/^version = \".*\"/s//version = \"$version\"/" Cargo.toml
+          grep -m1 '^version' Cargo.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        # Not --locked: the version bump rewrites aggrega's own entry in Cargo.lock.
+        # Dependencies stay pinned by the committed lock file.
+        run: cargo build --release
+
+      - name: Package
+        id: package
+        run: |
+          name="aggrega-${{ steps.version.outputs.version }}-x86_64"
+          mkdir -p "dist/$name"
+          install -m755 target/release/aggrega "dist/$name/aggrega"
+          install -m644 packaging/aggrega.desktop assets/aggrega.svg README.md "dist/$name/"
+          # A tarball keeps the executable bit, which artifact zips would drop.
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/${{ steps.package.outputs.name }}.tar.gz
+          if-no-files-found: error

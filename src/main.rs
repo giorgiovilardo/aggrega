@@ -535,6 +535,8 @@ fn main() -> Result<()> {
             .into(),
     );
 
+    ui.set_version(env!("CARGO_PKG_VERSION").into());
+
     let articles = Rc::new(VecModel::default());
     let feeds = Rc::new(VecModel::default());
     ui.set_articles(ModelRc::from(articles.clone()));
