@@ -1,0 +1,25 @@
+export struct ArticleItem {
+    id: int,
+    title: string,
+    source: string,
+    time: string,
+    snippet: string,
+    link: string,
+    read: bool,
+    has-thumb: bool,
+    thumb: image,
+    image-url: string,
+    letter: string,
+    tint: color,
+    // Set when the row is about to be removed (e.g. read while filtering unread).
+    leaving: bool,
+}
+
+export struct FeedItem {
+    id: int,
+    title: string,
+    unread: int,
+    letter: string,
+    tint: color,
+    error: bool,
+}

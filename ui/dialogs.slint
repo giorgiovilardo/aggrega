@@ -1,0 +1,267 @@
+import { Theme, Icons, Fonts } from "theme.slint";
+import { GhostButton, PrimaryButton } from "widgets.slint";
+
+// Shared modal chrome: dimmed backdrop + paper card that rises and fades in.
+component Modal inherits Rectangle {
+    in property <bool> shown;
+    in property <bool> dismissable: true;
+    in property <length> card-width: 540px;
+    callback dismiss();
+
+    visible: self.opacity > 0.01;
+    opacity: root.shown ? 1 : 0;
+    animate opacity { duration: 200ms; easing: ease-out; }
+
+    Rectangle {
+        background: Theme.overlay;
+        TouchArea {
+            clicked => {
+                if (root.dismissable) {
+                    root.dismiss();
+                }
+            }
+        }
+    }
+
+    card := Rectangle {
+        width: min(root.card-width, parent.width - 48px);
+        height: body.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2 + (root.shown ? 0px : 28px);
+        animate y { duration: 380ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+        background: Theme.surface;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.rule;
+        drop-shadow-blur: 50px;
+        drop-shadow-offset-y: 18px;
+        drop-shadow-color: Theme.shadow;
+
+        // Red top rule, like a section header.
+        Rectangle {
+            y: 0;
+            height: 4px;
+            border-radius: 6px;
+            background: Theme.accent;
+        }
+
+        // Swallow clicks so they don't reach the backdrop.
+        TouchArea { }
+
+        body := VerticalLayout {
+            padding: 32px;
+            padding-top: 30px;
+            spacing: 14px;
+            @children
+        }
+    }
+}
+
+component DialogHeader inherits VerticalLayout {
+    in property <string> kicker;
+    in property <string> title;
+    in property <string> subtitle;
+
+    spacing: 8px;
+    padding-bottom: 8px;
+
+    Text {
+        text: root.kicker.to-uppercase();
+        font-family: Fonts.sans-black;
+        font-weight: 800;
+        font-size: 10.5px;
+        letter-spacing: 2px;
+        color: Theme.accent;
+    }
+    Text {
+        text: root.title;
+        wrap: word-wrap;
+        font-family: Fonts.serif-black;
+        font-weight: 900;
+        font-size: 28px;
+        letter-spacing: -0.4px;
+        color: Theme.ink;
+    }
+    Text {
+        text: root.subtitle;
+        wrap: word-wrap;
+        font-family: Fonts.serif;
+        font-size: 15.5px;
+        color: Theme.text-muted;
+    }
+}
+
+export component AddSourceDialog inherits Rectangle {
+    in property <bool> busy;
+    in property <string> error;
+    callback submit(string);
+    callback closed();
+
+    property <bool> shown: false;
+
+    public function open() {
+        self.shown = true;
+        input.text = "";
+        input.focus();
+    }
+
+    public function close() {
+        if (self.shown) {
+            self.shown = false;
+            input.clear-focus();
+            self.closed();
+        }
+    }
+
+    function do-submit() {
+        if (!root.busy && input.text != "") {
+            root.submit(input.text);
+        }
+    }
+
+    Modal {
+        shown: root.shown;
+        dismissable: !root.busy;
+        dismiss => { root.close(); }
+
+        DialogHeader {
+            kicker: "New source";
+            title: "Add to your edition";
+            subtitle: "Paste an RSS, Atom or JSON feed — or just a website address. Aggrega will find the feed for you.";
+        }
+
+        Rectangle {
+            height: 50px;
+            border-radius: 4px;
+            background: Theme.input;
+            border-width: 1px;
+            border-color: root.error != "" ? Theme.danger : input.has-focus ? Theme.ink : Theme.rule;
+            animate border-color { duration: 160ms; }
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
+                Image {
+                    source: Icons.link;
+                    width: 17px;
+                    height: 17px;
+                    y: (parent.height - self.height) / 2;
+                    colorize: input.has-focus ? Theme.accent : Theme.text-faint;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    Text {
+                        x: 0;
+                        text: "e.g. theverge.com or https://example.com/feed.xml";
+                        color: Theme.text-faint;
+                        font-family: Fonts.serif;
+                        font-italic: true;
+                        font-size: 15.5px;
+                        visible: input.text == "";
+                    }
+                    input := TextInput {
+                        width: parent.width;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        single-line: true;
+                        font-family: Fonts.serif;
+                        font-size: 15.5px;
+                        color: Theme.ink;
+                        selection-background-color: Theme.accent-soft;
+                        selection-foreground-color: Theme.ink;
+                        enabled: !root.busy;
+                        accepted => { root.do-submit(); }
+                    }
+                }
+            }
+        }
+
+        if root.error != "": HorizontalLayout {
+            spacing: 8px;
+            Image {
+                source: Icons.alert;
+                width: 15px;
+                height: 15px;
+                colorize: Theme.danger;
+            }
+            Text {
+                text: root.error;
+                wrap: word-wrap;
+                font-family: Fonts.sans-semibold;
+                font-weight: 600;
+                font-size: 13px;
+                color: Theme.danger;
+                horizontal-stretch: 1;
+            }
+        }
+
+        HorizontalLayout {
+            padding-top: 10px;
+            spacing: 10px;
+            alignment: end;
+            GhostButton {
+                text: "Cancel";
+                clicked => { root.close(); }
+            }
+            PrimaryButton {
+                text: root.busy ? "Looking for the feed…" : "Add source";
+                icon: Icons.plus;
+                has-icon: !root.busy;
+                enabled: !root.busy && input.text != "";
+                clicked => { root.do-submit(); }
+            }
+        }
+    }
+}
+
+export component ConfirmRemoveDialog inherits Rectangle {
+    callback confirmed(int);
+    callback closed();
+
+    property <bool> shown: false;
+    property <int> feed-id: -1;
+    property <string> name;
+
+    public function ask(id: int, name: string) {
+        self.feed-id = id;
+        self.name = name;
+        self.shown = true;
+    }
+
+    public function close() {
+        if (self.shown) {
+            self.shown = false;
+            self.closed();
+        }
+    }
+
+    Modal {
+        shown: root.shown;
+        card-width: 480px;
+        dismiss => { root.close(); }
+
+        DialogHeader {
+            kicker: "Remove source";
+            title: "Drop “" + root.name + "”?";
+            subtitle: "The source and all of its saved articles will be removed from Aggrega.";
+        }
+
+        HorizontalLayout {
+            padding-top: 10px;
+            spacing: 10px;
+            alignment: end;
+            GhostButton {
+                text: "Keep it";
+                clicked => { root.close(); }
+            }
+            PrimaryButton {
+                text: "Remove";
+                clicked => {
+                    root.confirmed(root.feed-id);
+                    root.close();
+                }
+            }
+        }
+    }
+}

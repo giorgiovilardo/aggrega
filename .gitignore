@@ -1,0 +1,9 @@
+# Cargo build output
+/target
+**/*.rs.bk
+
+# makepkg (packaging/arch) build dirs, packages and logs
+/packaging/arch/src
+/packaging/arch/pkg
+/packaging/arch/*.pkg.tar.*
+/packaging/arch/*.log

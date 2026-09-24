@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Aggrega
+GenericName=Feed Reader
+Comment=Fast, local-first RSS and Atom feed reader
+Exec=aggrega
+Icon=aggrega
+Terminal=false
+Categories=Network;News;Feed;
+Keywords=rss;atom;feed;news;reader;
+StartupNotify=true
+StartupWMClass=aggrega

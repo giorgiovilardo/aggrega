@@ -1,0 +1,458 @@
+import { ListView, Palette } from "std-widgets.slint";
+import { Theme, Icons, Fonts } from "theme.slint";
+import { ArticleItem, FeedItem } from "types.slint";
+import { EmptyState, IconButton, Tabs, WindowControls } from "widgets.slint";
+import { Sidebar } from "sidebar.slint";
+import { ArticleCard } from "article-card.slint";
+import { AddSourceDialog, ConfirmRemoveDialog } from "dialogs.slint";
+
+export { Theme, ArticleItem, FeedItem }
+
+global Motion {
+    // Progress of `t` through the window [a, b], clamped to 0..1.
+    public pure function seg(t: float, a: float, b: float) -> float {
+        return clamp((t - a) / (b - a), 0, 1);
+    }
+
+    // Cubic ease-out.
+    public pure function ease(x: float) -> float {
+        return 1 - Math.pow(1 - x, 3);
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Aggrega";
+    icon: @image-url("../assets/aggrega.svg");
+    preferred-width: 1240px;
+    preferred-height: 820px;
+    min-width: 860px;
+    min-height: 560px;
+    // Frameless: Aggrega draws its own title bar, rounded corners and border.
+    no-frame: true;
+    resize-border-width: 6px;
+    background: transparent;
+    default-font-family: Fonts.sans;
+    default-font-size: 14px;
+    forward-focus: keys;
+
+    in property <[ArticleItem]> articles;
+    in property <[FeedItem]> feeds;
+    in-out property <int> selected-feed: -1;
+    in-out property <bool> unread-only: true;
+    in property <bool> refreshing;
+    in property <bool> has-feeds;
+    in property <int> total-unread;
+    in property <string> view-title: "All articles";
+    in property <string> status-text;
+    in property <string> today;
+    in property <bool> adding;
+    in-out property <string> add-error;
+
+    callback refresh();
+    callback open-article(int);
+    callback toggle-read(int);
+    callback filter-changed();
+    callback mark-all-read();
+    callback add-feed(string);
+    callback remove-feed(int);
+    callback theme-changed(bool);
+    callback close-window();
+
+    // `minimized` / `maximized` are built-in Window properties, kept in sync
+    // with the real window state by Slint.
+    function toggle-maximize-window() {
+        self.maximized = !self.maximized;
+    }
+
+    public function apply-theme() {
+        Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+
+    public function show-toast(message: string) {
+        self.toast-message = message;
+        self.toast-visible = false;
+        self.toast-visible = true;
+    }
+
+    public function close-add-dialog() {
+        add-dialog.close();
+    }
+
+    function open-add-dialog() {
+        self.add-error = "";
+        add-dialog.open();
+    }
+
+    function select(id: int) {
+        if (id != self.selected-feed) {
+            self.selected-feed = id;
+            self.filter-changed();
+        }
+    }
+
+    property <string> toast-message;
+    property <bool> toast-visible: false;
+
+    // ---- Opening sequence -------------------------------------------------
+    // One master timeline runs 0 → 1 over 2.8 s; every piece of the intro is
+    // derived from it. Nothing depends on it after it finishes.
+    property <float> intro: 0;
+    property <bool> intro-skipped: false;
+    property <bool> intro-running: self.intro < 1 && !self.intro-skipped;
+    animate intro { duration: 2800ms; easing: linear; }
+    init => {
+        self.intro = 1;
+    }
+    // The app content settles in while the curtain lifts.
+    property <float> reveal: root.intro-skipped ? 1 : Motion.ease(Motion.seg(root.intro, 0.70, 1.0));
+
+    frame := Rectangle {
+    border-radius: root.maximized ? 0px : 10px;
+    clip: true;
+    background: Theme.bg;
+    animate background { duration: 300ms; }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (root.intro-running) {
+                root.intro-skipped = true;
+                return accept;
+            }
+            if (event.text == Key.F5 || (event.modifiers.control && event.text == "r")) {
+                root.refresh();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "n") {
+                root.open-add-dialog();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                add-dialog.close();
+                confirm.close();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            Sidebar {
+                width: 272px;
+                feeds: root.feeds;
+                selected: root.selected-feed;
+                total-unread: root.total-unread;
+                dark: Theme.dark;
+                select(id) => { root.select(id); }
+                add => { root.open-add-dialog(); }
+                remove(id, name) => { confirm.ask(id, name); }
+                toggle-maximize => { root.toggle-maximize-window(); }
+                toggle-theme => {
+                    Theme.dark = !Theme.dark;
+                    root.apply-theme();
+                    root.theme-changed(Theme.dark);
+                }
+            }
+
+            main := Rectangle {
+                horizontal-stretch: 1;
+                // Reading column shared by the header and the article list.
+                property <length> column: min(self.width - 72px, 980px);
+                property <length> gutter: (self.width - self.column) / 2;
+
+                content := VerticalLayout {
+                    y: (1 - root.reveal) * 28px;
+                    opacity: root.reveal;
+
+                    // Header — doubles as the window title bar. The move area sits
+                    // underneath, so buttons on top keep their own clicks.
+                    Rectangle {
+                        // WindowMoveArea reports itself as stretchable; keep this row at its natural height.
+                        vertical-stretch: 0;
+                        WindowMoveArea {
+                            TouchArea {
+                                double-clicked => { root.toggle-maximize-window(); }
+                            }
+                        }
+                        VerticalLayout {
+                            padding-left: main.gutter;
+                            padding-right: main.gutter;
+                            padding-top: 30px;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                padding-bottom: 14px;
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: end;
+                                    spacing: 6px;
+                                    Text {
+                                        text: root.today.to-uppercase();
+                                        font-family: Fonts.sans-bold;
+                                        font-weight: 700;
+                                        font-size: 10.5px;
+                                        letter-spacing: 1.8px;
+                                        color: Theme.text-faint;
+                                    }
+                                    Text {
+                                        text: root.view-title.to-uppercase();
+                                        overflow: elide;
+                                        font-family: Fonts.serif-semibold;
+                                        font-weight: 600;
+                                        font-size: 30px;
+                                        letter-spacing: 4px;
+                                        color: Theme.ink;
+                                    }
+                                    Text {
+                                        text: root.status-text;
+                                        font-family: Fonts.serif;
+                                        font-italic: true;
+                                        font-size: 15px;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: end;
+                                    Tabs {
+                                        options: ["Unread", "All"];
+                                        index: root.unread-only ? 0 : 1;
+                                        changed(i) => {
+                                            root.unread-only = i == 0;
+                                            root.filter-changed();
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: end;
+                                    IconButton {
+                                        icon: Icons.check-all;
+                                        clicked => { root.mark-all-read(); }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: end;
+                                    IconButton {
+                                        icon: Icons.refresh;
+                                        spinning: root.refreshing;
+                                        clicked => { root.refresh(); }
+                                    }
+                                }
+                            }
+
+                            // Masthead double rule.
+                            Rectangle {
+                                height: 2px;
+                                background: Theme.ink;
+                            }
+                            Rectangle {
+                                height: 3px;
+                            }
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.ink;
+                            }
+                        }
+                    }
+
+                    if !root.has-feeds: EmptyState {
+                        vertical-stretch: 1;
+                        kicker: "First edition";
+                        title: "Welcome to Aggrega";
+                        subtitle: "Follow blogs, newspapers and YouTube channels.\nEverything stays on this computer — no account, no cloud.";
+                        action: "Add your first source";
+                        act => { root.open-add-dialog(); }
+                    }
+
+                    if root.has-feeds && root.articles.length == 0: EmptyState {
+                        vertical-stretch: 1;
+                        kicker: root.refreshing ? "Stop the presses" : root.unread-only ? "That's the edition" : "Quiet news day";
+                        title: root.refreshing ? "Fetching the latest…" : root.unread-only ? "You're all caught up" : "Nothing here yet";
+                        subtitle: root.refreshing ? "This only takes a moment." : root.unread-only ? "You've read everything. Time for a coffee." : "Hit refresh to check your sources for new stories.";
+                    }
+
+                    if root.has-feeds && root.articles.length > 0: ListView {
+                        vertical-stretch: 1;
+                        for article[i] in root.articles: ArticleCard {
+                            item: article;
+                            featured: i == 0 && article.has-thumb;
+                            open => { root.open-article(i); }
+                            toggle-read => { root.toggle-read(i); }
+                        }
+                    }
+                }
+
+                // Window controls, pinned to the top-right corner.
+                WindowControls {
+                    x: parent.width - self.preferred-width - 6px;
+                    y: 6px;
+                    maximized: root.maximized;
+                    minimize => { root.minimized = true; }
+                    toggle-maximize => { root.toggle-maximize-window(); }
+                    close => { root.close-window(); }
+                }
+
+                // Indeterminate progress sweep while refreshing.
+                Rectangle {
+                    y: 0;
+                    height: 3px;
+                    clip: true;
+                    opacity: root.refreshing ? 1 : 0;
+                    animate opacity { duration: 300ms; }
+                    Rectangle {
+                        property <float> t: root.refreshing ? Math.mod(animation-tick() / 1ms, 1300) / 1300 : 0;
+                        width: parent.width * 0.35;
+                        x: -self.width + (parent.width + self.width) * self.t;
+                        background: Theme.accent;
+                    }
+                }
+            }
+        }
+
+        // Toast
+        toast := Rectangle {
+            property <length> offset: root.toast-visible ? 0px : 90px;
+            x: 272px + (parent.width - 272px - self.width) / 2;
+            y: parent.height - self.height - 28px + self.offset;
+            width: toast-row.preferred-width;
+            height: 42px;
+            border-radius: 21px;
+            background: Theme.toast-bg;
+            opacity: root.toast-visible ? 1 : 0;
+            drop-shadow-blur: 24px;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-color: Theme.shadow;
+            animate offset { duration: 420ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+            animate opacity { duration: 250ms; }
+
+            toast-row := HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 20px;
+                spacing: 10px;
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 4px;
+                    background: Theme.accent;
+                }
+                Text {
+                    text: root.toast-message;
+                    vertical-alignment: center;
+                    font-family: Fonts.sans-semibold;
+                    font-weight: 600;
+                    font-size: 13px;
+                    color: Theme.toast-text;
+                }
+            }
+        }
+
+        Timer {
+            interval: 3500ms;
+            running: root.toast-visible;
+            triggered => { root.toast-visible = false; }
+        }
+
+        add-dialog := AddSourceDialog {
+            busy: root.adding;
+            error: root.add-error;
+            submit(url) => { root.add-feed(url); }
+            closed => { keys.focus(); }
+        }
+
+        confirm := ConfirmRemoveDialog {
+            confirmed(id) => { root.remove-feed(id); }
+            closed => { keys.focus(); }
+        }
+
+        // Opening sequence: a paper "front page" that sets the masthead and then
+        // lifts like a curtain to reveal the app.
+        if root.intro-running: splash := Rectangle {
+            property <float> rule: Motion.ease(Motion.seg(root.intro, 0.00, 0.24));
+            property <float> word: Motion.ease(Motion.seg(root.intro, 0.10, 0.38));
+            property <float> tag: Motion.ease(Motion.seg(root.intro, 0.28, 0.50));
+            property <float> date: Motion.ease(Motion.seg(root.intro, 0.38, 0.58));
+            property <float> lift: Motion.ease(Motion.seg(root.intro, 0.70, 1.0));
+
+            y: -self.height * self.lift;
+            background: Theme.bg;
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.intro-skipped = true; }
+            }
+
+            // Red edge along the bottom of the curtain.
+            Rectangle {
+                y: parent.height - self.height;
+                height: 4px;
+                background: Theme.accent;
+                opacity: splash.lift > 0 ? 1 : 0;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 0px;
+
+                // The wordmark rises out of a clipped slot above the rule.
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: wordmark.preferred-width + 20px;
+                        height: wordmark.preferred-height;
+                        clip: true;
+                        wordmark := Text {
+                            y: (1 - splash.word) * self.height;
+                            opacity: splash.word;
+                            text: "Aggrega";
+                            font-family: Fonts.serif-black;
+                            font-weight: 900;
+                            font-size: 96px;
+                            letter-spacing: -3px;
+                            color: Theme.accent;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    padding-top: 6px;
+                    padding-bottom: 16px;
+                    Rectangle {
+                        width: 420px * splash.rule;
+                        height: 3px;
+                        background: Theme.ink;
+                    }
+                }
+
+                Text {
+                    horizontal-alignment: center;
+                    opacity: splash.tag;
+                    text: "YOUR FEEDS · ONE EDITION";
+                    font-family: Fonts.sans-black;
+                    font-weight: 800;
+                    font-size: 13px;
+                    letter-spacing: 2.6px + (1 - splash.tag) * 10px;
+                    color: Theme.ink;
+                }
+
+                Text {
+                    horizontal-alignment: center;
+                    opacity: splash.date;
+                    text: root.today;
+                    font-family: Fonts.serif;
+                    font-italic: true;
+                    font-size: 16px;
+                    color: Theme.text-muted;
+                }
+            }
+        }
+    }
+    }
+
+    // Window outline, drawn above the content (it has no input handling).
+    Rectangle {
+        border-radius: frame.border-radius;
+        border-width: root.maximized ? 0px : 1px;
+        border-color: Theme.dark ? #ffffff1a : #0000001f;
+    }
+}

@@ -1,0 +1,344 @@
+import { Theme, Icons, Fonts } from "theme.slint";
+
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> spinning: false;
+    in property <length> size: 36px;
+    in property <length> icon-size: 18px;
+    callback clicked();
+
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: touch.pressed ? Theme.chip : touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: 140ms; }
+
+    Image {
+        source: root.icon;
+        width: root.icon-size;
+        height: root.icon-size;
+        colorize: root.spinning ? Theme.accent : touch.has-hover ? Theme.ink : Theme.text-muted;
+        // Only depends on animation-tick() while spinning, so idle costs nothing.
+        transform-rotation: root.spinning ? (animation-tick() / 1ms) * 0.4deg : 0deg;
+        animate colorize { duration: 140ms; }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Red pill with small-caps label, in the spirit of a newsroom "Subscribe" button.
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 40px;
+    border-radius: self.height / 2;
+    background: !root.enabled ? Theme.chip : touch.pressed || touch.has-hover ? Theme.accent-strong : Theme.accent;
+    animate background { duration: 160ms; }
+
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 8px;
+        alignment: center;
+        if root.has-icon: Image {
+            source: root.icon;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.enabled ? white : Theme.text-faint;
+        }
+        Text {
+            text: root.text.to-uppercase();
+            color: root.enabled ? white : Theme.text-faint;
+            font-family: Fonts.sans-bold;
+            font-weight: 700;
+            font-size: 12.5px;
+            letter-spacing: 0.9px;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component GhostButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    height: 40px;
+    border-radius: self.height / 2;
+    background: touch.has-hover ? Theme.hover : transparent;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.ink : Theme.rule;
+    animate background, border-color { duration: 160ms; }
+
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        Text {
+            text: root.text.to-uppercase();
+            color: Theme.ink;
+            font-family: Fonts.sans-bold;
+            font-weight: 700;
+            font-size: 12.5px;
+            letter-spacing: 0.9px;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A small square in the source's colour, with its initial set in serif.
+export component SourceMark inherits Rectangle {
+    in property <string> letter;
+    in property <color> tint;
+    in property <length> size: 22px;
+
+    width: root.size;
+    height: root.size;
+    border-radius: 3px;
+    background: Theme.source-color(root.tint);
+    animate background { duration: 300ms; }
+
+    Text {
+        text: root.letter;
+        color: Theme.dark ? #141312 : #ffffff;
+        font-family: Fonts.serif-black;
+        font-weight: 900;
+        font-size: root.size * 0.58;
+    }
+}
+
+// Editorial tab bar: small-caps labels with a sliding red underline.
+export component Tabs inherits Rectangle {
+    in property <[string]> options;
+    in property <int> index;
+    in property <length> segment: 76px;
+    callback changed(int);
+
+    width: root.options.length * root.segment;
+    height: 36px;
+
+    Rectangle {
+        y: parent.height - 3px;
+        height: 1px;
+        background: Theme.rule;
+    }
+    Rectangle {
+        x: root.index * root.segment + 14px;
+        y: parent.height - 4px;
+        width: root.segment - 28px;
+        height: 3px;
+        background: Theme.accent;
+        animate x { duration: 320ms; easing: cubic-bezier(0.3, 1.25, 0.5, 1); }
+    }
+
+    for option[i] in root.options: Rectangle {
+        x: i * root.segment;
+        width: root.segment;
+        height: parent.height - 4px;
+
+        Text {
+            text: option.to-uppercase();
+            font-family: Fonts.sans-bold;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 1.1px;
+            color: i == root.index ? Theme.ink : touch.has-hover ? Theme.text-muted : Theme.text-faint;
+            animate color { duration: 200ms; }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                if (i != root.index) {
+                    root.changed(i);
+                }
+            }
+        }
+    }
+}
+
+// Sun/moon toggle with a springy knob.
+export component ThemeSwitch inherits Rectangle {
+    in property <bool> dark;
+    callback toggled();
+
+    width: 56px;
+    height: 30px;
+    border-radius: self.height / 2;
+    background: Theme.chip;
+    border-width: 1px;
+    border-color: Theme.rule;
+    animate background, border-color { duration: 300ms; }
+
+    Rectangle {
+        width: 24px;
+        height: 24px;
+        y: 3px;
+        x: root.dark ? parent.width - self.width - 3px : 3px;
+        border-radius: self.height / 2;
+        background: Theme.ink;
+        animate x { duration: 380ms; easing: cubic-bezier(0.3, 1.4, 0.5, 1); }
+        animate background { duration: 300ms; }
+
+        Image {
+            source: root.dark ? Icons.moon : Icons.sun;
+            width: 14px;
+            height: 14px;
+            colorize: Theme.bg;
+            transform-rotation: root.dark ? 0deg : 180deg;
+            animate transform-rotation { duration: 450ms; easing: ease-out; }
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+// Unread count: plain figures, red when the row is selected.
+export component Badge inherits Rectangle {
+    in property <int> count;
+    in property <bool> active;
+
+    height: 20px;
+    width: max(20px, label.preferred-width + 4px);
+
+    label := Text {
+        x: parent.width - self.width;
+        text: root.count > 999 ? "999+" : root.count;
+        font-family: Fonts.sans-semibold;
+        font-weight: 600;
+        font-size: 12px;
+        color: root.active ? Theme.accent : Theme.text-faint;
+        animate color { duration: 200ms; }
+    }
+}
+
+export component EmptyState inherits VerticalLayout {
+    in property <string> kicker;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> action;
+    callback act();
+
+    alignment: center;
+    spacing: 14px;
+    padding: 48px;
+
+    Text {
+        text: root.kicker.to-uppercase();
+        horizontal-alignment: center;
+        font-family: Fonts.sans-bold;
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 2.4px;
+        color: Theme.accent;
+    }
+
+    Text {
+        text: root.title;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+        font-family: Fonts.serif-black;
+        font-weight: 900;
+        font-size: 40px;
+        letter-spacing: -0.6px;
+        color: Theme.ink;
+    }
+
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: 56px;
+            height: 3px;
+            background: Theme.ink;
+        }
+    }
+
+    Text {
+        text: root.subtitle;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+        font-family: Fonts.serif;
+        font-italic: true;
+        font-size: 17px;
+        color: Theme.text-muted;
+    }
+
+    if root.action != "": HorizontalLayout {
+        alignment: center;
+        padding-top: 14px;
+        PrimaryButton {
+            text: root.action;
+            icon: Icons.plus;
+            has-icon: true;
+            clicked => { root.act(); }
+        }
+    }
+}
+
+component WindowButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> close: false;
+    callback clicked();
+
+    width: 36px;
+    height: 30px;
+    border-radius: 4px;
+    background: touch.pressed ? (root.close ? Theme.accent-strong : Theme.chip)
+        : touch.has-hover ? (root.close ? Theme.accent : Theme.hover) : transparent;
+    animate background { duration: 120ms; }
+
+    Image {
+        source: root.icon;
+        width: 16px;
+        height: 16px;
+        colorize: touch.has-hover && root.close ? white : touch.has-hover ? Theme.ink : Theme.text-muted;
+        animate colorize { duration: 120ms; }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Minimise / maximise-restore / close, drawn in the app's own style.
+export component WindowControls inherits HorizontalLayout {
+    in property <bool> maximized;
+    callback minimize();
+    callback toggle-maximize();
+    callback close();
+
+    spacing: 2px;
+    WindowButton {
+        icon: Icons.win-minimize;
+        clicked => { root.minimize(); }
+    }
+    WindowButton {
+        icon: root.maximized ? Icons.win-restore : Icons.win-maximize;
+        clicked => { root.toggle-maximize(); }
+    }
+    WindowButton {
+        icon: Icons.win-close;
+        close: true;
+        clicked => { root.close(); }
+    }
+}

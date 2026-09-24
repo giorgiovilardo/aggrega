@@ -1,0 +1,283 @@
+import { ListView } from "std-widgets.slint";
+import { Theme, Icons, Fonts } from "theme.slint";
+import { FeedItem } from "types.slint";
+import { Badge, IconButton, PrimaryButton, SourceMark, ThemeSwitch } from "widgets.slint";
+
+component SidebarItem inherits Rectangle {
+    in property <string> title;
+    in property <int> unread;
+    in property <bool> selected;
+    in property <bool> removable: false;
+    in property <bool> error: false;
+    in property <string> letter;
+    in property <color> tint;
+    in property <image> icon;
+    in property <bool> use-icon: false;
+    callback clicked();
+    callback remove();
+
+    property <bool> hovered: touch.has-hover || remove-touch.has-hover;
+
+    height: 38px;
+    background: root.selected ? Theme.hover : root.hovered ? Theme.hover : transparent;
+    animate background { duration: 160ms; }
+
+    // Red selection rule that grows in from the middle.
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: root.selected ? parent.height : 0px;
+        y: (parent.height - self.height) / 2;
+        background: Theme.accent;
+        animate height { duration: 280ms; easing: cubic-bezier(0.3, 1.2, 0.5, 1); }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 10px;
+        spacing: 11px;
+
+        if root.use-icon: Image {
+            source: root.icon;
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.selected ? Theme.accent : Theme.text-muted;
+        }
+        if !root.use-icon: VerticalLayout {
+            alignment: center;
+            SourceMark {
+                letter: root.letter;
+                tint: root.tint;
+                size: 18px;
+            }
+        }
+
+        Text {
+            text: root.title;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            overflow: elide;
+            font-family: root.selected ? Fonts.sans-bold : Fonts.sans;
+            font-weight: root.selected ? 700 : 500;
+            font-size: 13.5px;
+            color: root.selected || root.hovered ? Theme.ink : Theme.text-muted;
+            animate color { duration: 160ms; }
+        }
+
+        if root.error: VerticalLayout {
+            alignment: center;
+            Image {
+                source: Icons.alert;
+                width: 14px;
+                height: 14px;
+                colorize: Theme.danger;
+            }
+        }
+
+        // Unread count, swapped for a remove button while hovered.
+        Rectangle {
+            width: max(badge.width, 26px);
+            badge := Badge {
+                x: parent.width - self.width;
+                count: root.unread;
+                active: root.selected;
+                opacity: root.unread > 0 && !(root.removable && root.hovered) ? 1 : 0;
+                animate opacity { duration: 140ms; }
+            }
+            if root.removable: Rectangle {
+                x: parent.width - self.width;
+                width: 26px;
+                height: 26px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 13px;
+                background: remove-touch.has-hover ? Theme.accent-soft : transparent;
+                opacity: root.hovered ? 1 : 0;
+                animate opacity, background { duration: 140ms; }
+                Image {
+                    source: Icons.trash;
+                    width: 14px;
+                    height: 14px;
+                    colorize: remove-touch.has-hover ? Theme.danger : Theme.text-faint;
+                }
+            }
+            remove-touch := TouchArea {
+                enabled: root.removable;
+                mouse-cursor: root.removable ? pointer : default;
+                clicked => { root.remove(); }
+            }
+        }
+    }
+}
+
+component SectionLabel inherits HorizontalLayout {
+    in property <string> text;
+    padding-left: 16px;
+    padding-right: 10px;
+    spacing: 10px;
+    Text {
+        text: root.text;
+        vertical-alignment: center;
+        font-family: Fonts.sans-black;
+        font-weight: 800;
+        font-size: 10.5px;
+        letter-spacing: 1.8px;
+        color: Theme.ink;
+    }
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        Rectangle {
+            height: 1px;
+            background: Theme.rule;
+        }
+    }
+    @children
+}
+
+export component Sidebar inherits Rectangle {
+    in property <[FeedItem]> feeds;
+    in property <int> selected;
+    in property <int> total-unread;
+    in property <bool> dark;
+    callback select(int);
+    callback add();
+    callback remove(int, string);
+    callback toggle-theme();
+    callback toggle-maximize();
+
+    background: Theme.sidebar;
+    animate background { duration: 300ms; }
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.rule;
+    }
+
+    VerticalLayout {
+        padding-top: 24px;
+        padding-bottom: 16px;
+        spacing: 2px;
+
+        // Masthead — doubles as a window drag handle.
+        Rectangle {
+            // WindowMoveArea reports itself as stretchable; keep this row at its natural height.
+            vertical-stretch: 0;
+            WindowMoveArea {
+                TouchArea {
+                    double-clicked => { root.toggle-maximize(); }
+                }
+            }
+            VerticalLayout {
+                padding-left: 22px;
+                padding-right: 22px;
+                padding-bottom: 26px;
+                spacing: 6px;
+                Text {
+                    text: "Aggrega";
+                    font-family: Fonts.serif-black;
+                    font-weight: 900;
+                    font-size: 34px;
+                    letter-spacing: -1px;
+                    color: Theme.accent;
+                }
+                Rectangle {
+                    height: 2px;
+                    background: Theme.ink;
+                }
+                Text {
+                    text: "YOUR FEEDS · ONE EDITION";
+                    font-family: Fonts.sans-bold;
+                    font-weight: 700;
+                    font-size: 9.5px;
+                    letter-spacing: 1.9px;
+                    color: Theme.text-muted;
+                }
+            }
+        }
+
+        SidebarItem {
+            title: "All articles";
+            use-icon: true;
+            icon: Icons.inbox;
+            unread: root.total-unread;
+            selected: root.selected < 0;
+            clicked => { root.select(-1); }
+        }
+
+        SectionLabel {
+            padding-top: 22px;
+            padding-bottom: 8px;
+            text: "SOURCES";
+            IconButton {
+                icon: Icons.plus;
+                size: 26px;
+                icon-size: 15px;
+                clicked => { root.add(); }
+            }
+        }
+
+        if root.feeds.length == 0: HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            Text {
+                text: "No sources yet. Add a blog, a newspaper or a YouTube channel to start your edition.";
+                wrap: word-wrap;
+                font-family: Fonts.serif;
+                font-italic: true;
+                font-size: 13.5px;
+                color: Theme.text-faint;
+            }
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for feed in root.feeds: Rectangle {
+                height: 38px;
+                SidebarItem {
+                    title: feed.title;
+                    letter: feed.letter;
+                    tint: feed.tint;
+                    unread: feed.unread;
+                    error: feed.error;
+                    removable: true;
+                    selected: root.selected == feed.id;
+                    clicked => { root.select(feed.id); }
+                    remove => { root.remove(feed.id, feed.title); }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.rule;
+        }
+
+        HorizontalLayout {
+            padding-top: 14px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 10px;
+            PrimaryButton {
+                text: "Add source";
+                icon: Icons.plus;
+                has-icon: true;
+                horizontal-stretch: 1;
+                clicked => { root.add(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                ThemeSwitch {
+                    dark: root.dark;
+                    toggled => { root.toggle-theme(); }
+                }
+            }
+        }
+    }
+}

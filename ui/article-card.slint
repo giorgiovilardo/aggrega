@@ -1,0 +1,258 @@
+import { Theme, Icons, Fonts } from "theme.slint";
+import { ArticleItem } from "types.slint";
+
+// Kicker line: unread dot · SOURCE (in its colour) · time.
+component Kicker inherits HorizontalLayout {
+    in property <ArticleItem> item;
+    in property <length> size: 11px;
+
+    spacing: 8px;
+    if !root.item.read: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 7px;
+            height: 7px;
+            border-radius: 3.5px;
+            background: Theme.accent;
+        }
+    }
+    Text {
+        text: root.item.source.to-uppercase();
+        vertical-alignment: center;
+        overflow: elide;
+        font-family: Fonts.sans-black;
+        font-weight: 800;
+        font-size: root.size;
+        letter-spacing: 1.2px;
+        color: Theme.source-color(root.item.tint);
+        max-width: 320px;
+    }
+    Text {
+        text: root.item.time.to-uppercase();
+        vertical-alignment: center;
+        font-family: Fonts.sans-semibold;
+        font-weight: 600;
+        font-size: root.size;
+        letter-spacing: 0.8px;
+        color: Theme.text-faint;
+    }
+    Rectangle {
+        horizontal-stretch: 1;
+    }
+}
+
+// Thumbnail with a serif-initial placeholder, fade-in and a gentle hover zoom.
+component Thumb inherits Rectangle {
+    in property <ArticleItem> item;
+    in property <bool> hovered;
+    in property <length> letter-size: 40px;
+
+    clip: true;
+    background: Theme.source-color(root.item.tint).transparentize(0.82);
+
+    Text {
+        visible: root.item.thumb.width == 0;
+        text: root.item.letter;
+        font-family: Fonts.serif-black;
+        font-weight: 900;
+        font-size: root.letter-size;
+        color: Theme.source-color(root.item.tint).transparentize(0.4);
+    }
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.item.thumb;
+        image-fit: cover;
+        opacity: root.item.thumb.width > 0 ? (root.item.read ? 0.55 : 1) : 0;
+        transform-scale: root.hovered ? 1.045 : 1;
+        animate opacity { duration: 350ms; easing: ease-out; }
+        animate transform-scale { duration: 500ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+    }
+}
+
+export component ArticleCard inherits Rectangle {
+    in property <ArticleItem> item;
+    // The lead story: large photo and display headline.
+    in property <bool> featured: false;
+    in property <length> max-card-width: 980px;
+    callback open();
+    callback toggle-read();
+
+    // Rows glide in when they are created.
+    property <float> appear: 0;
+    property <bool> hovered: touch.has-hover || action-touch.has-hover;
+    init => {
+        self.appear = 1;
+    }
+
+    property <length> full-height: root.featured ? 356px : 164px;
+    // Headline size for the lead story, scaled down in narrow windows.
+    property <length> lead-size: row.width < 640px ? 24px : row.width < 800px ? 28px : 32px;
+
+    // Leaving rows fade, slide right and collapse, so the rows below glide up.
+    height: root.item.leaving ? 0px : root.full-height;
+    clip: true;
+    animate height { duration: 380ms; delay: 120ms; easing: cubic-bezier(0.65, 0, 0.35, 1); }
+
+    row := Rectangle {
+        width: min(parent.width - 72px, root.max-card-width);
+        height: root.full-height;
+        x: (parent.width - self.width) / 2 + (root.item.leaving ? 40px : 0px);
+        y: (1 - root.appear) * 16px;
+        opacity: root.item.leaving ? 0 : root.appear;
+        animate y, opacity, x { duration: 420ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+        // Hover wash, bleeding slightly beyond the text column.
+        Rectangle {
+            x: -14px;
+            width: parent.width + 28px;
+            y: 6px;
+            height: parent.height - 12px;
+            border-radius: 4px;
+            background: root.hovered ? Theme.hover : transparent;
+            animate background { duration: 180ms; }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.open(); }
+        }
+
+        if root.featured: HorizontalLayout {
+            padding-top: 22px;
+            padding-bottom: 28px;
+            spacing: 32px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text {
+                    text: "LEAD STORY";
+                    font-family: Fonts.sans-black;
+                    font-weight: 800;
+                    font-size: 10.5px;
+                    letter-spacing: 2.2px;
+                    color: Theme.accent;
+                }
+                Text {
+                    text: root.item.title;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    // At most three lines (Source Serif lines are ~1.42× the font size);
+                    // the text may shrink below its natural height.
+                    min-height: 0;
+                    max-height: root.lead-size * 1.45 * 3;
+                    font-family: root.item.read ? Fonts.serif-semibold : Fonts.serif-black;
+                    font-weight: root.item.read ? 600 : 900;
+                    font-size: root.lead-size;
+                    letter-spacing: -0.6px;
+                    color: root.hovered ? Theme.accent : root.item.read ? Theme.text-muted : Theme.ink;
+                    animate color { duration: 200ms; }
+                }
+                Text {
+                    text: root.item.snippet;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    min-height: 0;
+                    max-height: 16px * 1.45 * 2;
+                    font-family: Fonts.serif;
+                    font-size: 16px;
+                    color: root.item.read ? Theme.text-faint : Theme.text-muted;
+                }
+                Kicker {
+                    item: root.item;
+                }
+            }
+            }
+
+            Thumb {
+                width: parent.width * (row.width < 800px ? 0.42 : 0.52);
+                item: root.item;
+                hovered: root.hovered;
+                letter-size: 88px;
+            }
+        }
+
+        if !root.featured: HorizontalLayout {
+            padding-top: 22px;
+            padding-bottom: 22px;
+            spacing: 28px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+            VerticalLayout {
+                spacing: 7px;
+                Kicker {
+                    item: root.item;
+                }
+                Text {
+                    text: root.item.title;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    min-height: 0;
+                    max-height: 20px * 1.45 * 2;
+                    font-family: root.item.read ? Fonts.serif-semibold : Fonts.serif-black;
+                    font-weight: root.item.read ? 600 : 900;
+                    font-size: 20px;
+                    letter-spacing: -0.2px;
+                    color: root.hovered ? Theme.accent : root.item.read ? Theme.text-muted : Theme.ink;
+                    animate color { duration: 200ms; }
+                }
+                Text {
+                    text: root.item.snippet;
+                    vertical-stretch: 1;
+                    min-height: 0;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    font-family: Fonts.serif;
+                    font-size: 14.5px;
+                    color: root.item.read ? Theme.text-faint : Theme.text-muted;
+                }
+            }
+            }
+
+            if root.item.has-thumb: Thumb {
+                width: 180px;
+                item: root.item;
+                hovered: root.hovered;
+            }
+        }
+
+        // Hairline between stories (a heavier ink rule under the lead).
+        Rectangle {
+            y: parent.height - self.height;
+            height: root.featured ? 2px : 1px;
+            background: root.featured ? Theme.ink : Theme.rule;
+        }
+
+        // Hover action: toggle read / unread.
+        Rectangle {
+            x: parent.width - self.width - 6px;
+            y: root.featured ? 30px : 14px;
+            width: 30px;
+            height: 30px;
+            border-radius: 15px;
+            background: action-touch.has-hover ? Theme.ink : Theme.bg;
+            border-width: 1px;
+            border-color: Theme.rule;
+            opacity: root.hovered ? 1 : 0;
+            animate opacity, background { duration: 160ms; }
+
+            Image {
+                source: root.item.read ? Icons.circle : Icons.check;
+                width: 15px;
+                height: 15px;
+                colorize: action-touch.has-hover ? Theme.bg : Theme.ink;
+            }
+
+            action-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggle-read(); }
+            }
+        }
+    }
+}

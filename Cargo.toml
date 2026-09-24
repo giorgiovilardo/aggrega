@@ -1,0 +1,39 @@
+[package]
+name = "aggrega"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A fast, lightweight, local-first RSS/Atom feed reader"
+publish = false
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+directories = "6"
+feed-rs = "2.4"
+html-escape = "0.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+open = "5"
+rusqlite = { version = "0.40", features = ["bundled"] }
+ureq = "3"
+url = "2"
+
+[dependencies.slint]
+version = "1.18"
+default-features = false
+features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "accessibility"]
+
+[build-dependencies]
+slint-build = "1.18"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# Keep debug builds snappy for UI work: optimise dependencies, not our crate.
+[profile.dev.package."*"]
+opt-level = 2

@@ -1,0 +1,77 @@
+import { Palette } from "std-widgets.slint";
+
+// Bundled fonts (SIL Open Font License, see assets/fonts/FONTS.md).
+import "../assets/fonts/source-serif-4-400-normal.ttf";
+import "../assets/fonts/source-serif-4-400-italic.ttf";
+import "../assets/fonts/source-serif-4-600-normal.ttf";
+import "../assets/fonts/source-serif-4-700-normal.ttf";
+import "../assets/fonts/source-serif-4-900-normal.ttf";
+import "../assets/fonts/libre-franklin-500-normal.ttf";
+import "../assets/fonts/libre-franklin-600-normal.ttf";
+import "../assets/fonts/libre-franklin-700-normal.ttf";
+import "../assets/fonts/libre-franklin-800-normal.ttf";
+
+// Each static weight ships with its own family name.
+export global Fonts {
+    out property <string> serif: "Source Serif 4";               // 400, 700 (bold), italic
+    out property <string> serif-semibold: "Source Serif 4 SemiBold";
+    out property <string> serif-black: "Source Serif 4 Black";
+    out property <string> sans: "Libre Franklin Medium";
+    out property <string> sans-semibold: "Libre Franklin SemiBold";
+    out property <string> sans-bold: "Libre Franklin";           // 700
+    out property <string> sans-black: "Libre Franklin ExtraBold";
+}
+
+// Editorial design tokens: newsprint paper, ink, hairlines and one red accent.
+// Every surface binds to these and animates its colour, so switching theme
+// cross-fades the whole window.
+export global Theme {
+    in-out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
+    out property <color> bg: dark ? #131211 : #f7f4ee;
+    out property <color> sidebar: dark ? #0e0d0c : #eee9df;
+    out property <color> surface: dark ? #1c1a18 : #fffdf9;
+    out property <color> hover: dark ? #ffffff09 : #2b200f0b;
+    out property <color> chip: dark ? #26231f : #e6e0d4;
+    out property <color> input: dark ? #151413 : #ffffff;
+    out property <color> rule: dark ? #2e2b27 : #dcd5c8;
+    out property <color> ink: dark ? #efebe3 : #141312;
+    out property <color> text: dark ? #efebe3 : #141312;
+    out property <color> text-muted: dark ? #aba497 : #57524a;
+    out property <color> text-faint: dark ? #726b60 : #8d877c;
+    out property <color> accent: dark ? #f04a41 : #d2232a;
+    out property <color> accent-strong: dark ? #ff6259 : #ae1a20;
+    out property <color> accent-soft: dark ? #f04a411f : #d2232a12;
+    out property <color> danger: dark ? #f04a41 : #c21f26;
+    out property <color> overlay: dark ? #000000b3 : #1a140a59;
+    out property <color> shadow: dark ? #00000080 : #2b200f26;
+    out property <color> toast-bg: dark ? #efebe3 : #141312;
+    out property <color> toast-text: dark ? #141312 : #f7f4ee;
+
+    // Source colours are chosen in Rust from a muted editorial palette; lift them in dark mode.
+    public pure function source-color(c: color) -> color {
+        return dark ? c.brighter(0.55) : c;
+    }
+}
+
+export global Icons {
+    out property <image> refresh: @image-url("icons/refresh.svg");
+    out property <image> plus: @image-url("icons/plus.svg");
+    out property <image> sun: @image-url("icons/sun.svg");
+    out property <image> moon: @image-url("icons/moon.svg");
+    out property <image> check: @image-url("icons/check.svg");
+    out property <image> check-all: @image-url("icons/check-all.svg");
+    out property <image> circle: @image-url("icons/circle.svg");
+    out property <image> x: @image-url("icons/x.svg");
+    out property <image> trash: @image-url("icons/trash.svg");
+    out property <image> list: @image-url("icons/list.svg");
+    out property <image> link: @image-url("icons/link.svg");
+    out property <image> inbox: @image-url("icons/inbox.svg");
+    out property <image> alert: @image-url("icons/alert.svg");
+    out property <image> sparkles: @image-url("icons/sparkles.svg");
+    out property <image> rss: @image-url("icons/rss.svg");
+    out property <image> win-minimize: @image-url("icons/win-minimize.svg");
+    out property <image> win-maximize: @image-url("icons/win-maximize.svg");
+    out property <image> win-restore: @image-url("icons/win-restore.svg");
+    out property <image> win-close: @image-url("icons/win-close.svg");
+}
