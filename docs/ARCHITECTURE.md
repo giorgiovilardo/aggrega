@@ -14,6 +14,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
           │  • refresh: fetch::fetch_all → Store::apply_refresh (own SQLite conn)  │
           │  • add source: fetch::subscribe (discovery) → Store::add_feed          │
           │  • thumbnails: thumbs::load (disk cache or download+resize)            │
+          │  • reader: fetch::fetch_page → reader::extract_article, pictures       │
           └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -24,10 +25,12 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/main.rs` | Creates the window, wires Slint callbacks, owns `App` (models, thumbnail cache, refresh state), and schedules background work |
 | `src/fetch.rs` | HTTP via `ureq` (blocking, rustls, gzip). Parses feeds with `feed-rs`, discovers feeds in HTML, and extracts article images. Contains `par_for_each`, a tiny scoped thread pool |
 | `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes |
-| `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns a `SharedPixelBuffer` |
+| `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns a `SharedPixelBuffer`. Also loads reader pictures, shrunk to fit the column (not cached) |
+| `src/reader.rs` | Reader view content: a forgiving HTML tokenizer, HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
 | `src/text.rs` | HTML to plain text, truncation, relative times ("5m ago"), avatar letter and colour |
 | `ui/theme.slint` | `Theme` global with every colour token, switched by `Theme.dark`, plus the `Icons` global |
-| `ui/app.slint` | `AppWindow`: layout, header, list, toast, keyboard shortcuts, and the public API used from Rust |
+| `ui/app.slint` | `AppWindow`: responsive layout, header, list, toast, keyboard shortcuts, and the public API used from Rust |
+| `ui/reader.slint` | `ReaderView`: toolbar, headline, lead photo and one `BlockView` per content block, in a scrollable column |
 
 ## Threading model
 
@@ -44,20 +47,25 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 
 **Add source:** the app normalises the input (adding `https://` when it's missing) and fetches it. If the response parses as a feed, that feed is used. Otherwise the page is scanned for `<link rel="alternate" type="…rss|atom|feed+json">` tags, then common paths are tried (`/feed`, `/rss.xml`, `/atom.xml`, …). The first candidate that parses wins.
 
-**Open article:** the app calls `open::that_detached(link)` (xdg-open on Linux), sets `read = 1`, and updates the row in place. Updating in place keeps the scroll position and plays the "read" animation.
+**Open article (reader view):** the app loads the article's stored `body`, decodes it into blocks, and shows the reader right away. It also sets `read = 1` and updates the list row in place. The list stays alive under the reader, so its scroll position survives the round trip.
+- While refreshing, each entry's fullest HTML (`content:encoded` / Atom content, else the summary) is converted to blocks and stored in `articles.body`.
+- If that text is short (under ~1,200 characters, so the feed only had a teaser) or missing (articles stored before schema v2), a worker downloads the page. `reader::extract_article` picks the richest `<article>`, `<main>`, `itemprop="articleBody"` or `*-content`/`*-body` region, skipping nav, asides, forms, and share/comment/related/newsletter blocks. With no such markup, it keeps the run of substantial paragraphs. The longer result wins, and it's saved back to `body`.
+- Pictures (the lead image plus inline images, at most 24) download on workers and fill in as they arrive. Broken ones are removed.
+- Every async result carries the article id and is dropped if the reader has moved on. Closing the reader frees its blocks and pictures.
+- Video sites (YouTube, Vimeo) aren't scraped. **Read on …** opens the original with `open::that_detached(link)` (xdg-open on Linux).
 
-## Storage schema (`PRAGMA user_version = 1`)
+## Storage schema (`PRAGMA user_version = 2`)
 
 ```sql
 feeds(id, url UNIQUE, title, site_url, etag, last_modified, last_fetched, last_error, added_at)
 articles(id, feed_id → feeds ON DELETE CASCADE, guid, title, link, snippet, image_url,
-         published, fetched_at, read, UNIQUE(feed_id, guid))
+         published, fetched_at, read, body, UNIQUE(feed_id, guid))
 settings(key PRIMARY KEY, value)            -- theme, last_refresh
 ```
 
-Indexes cover the hot queries: `articles(published DESC)`, `articles(feed_id, published DESC)` and `articles(feed_id, read)`. Articles store a plain-text snippet of at most 280 chars rather than full HTML, which keeps the DB small. Read articles older than 90 days are pruned after each refresh.
+Indexes cover the hot queries: `articles(published DESC)`, `articles(feed_id, published DESC)` and `articles(feed_id, read)`. For the list, articles keep a plain-text snippet of at most 280 chars. For the reader, `body` holds the article as simplified text blocks, one per line (`p `, `h `, `q `, `l `, `c `, `i ` + text, with `\` and newlines escaped), not HTML, which keeps it compact. Version 2 added `body`; it is `NULL` for older rows, which makes the reader fetch the page. Read articles older than 90 days are pruned after each refresh.
 
-To change the schema, add an `if version < 2 { … PRAGMA user_version = 2; }` block in `Store::migrate` and bump `SCHEMA_VERSION`.
+To change the schema, add an `if version < 3 { … PRAGMA user_version = 3; }` block in `Store::migrate` and bump `SCHEMA_VERSION`.
 
 ## Performance notes
 
@@ -88,5 +96,7 @@ Every static weight has its own family name, so the `Fonts` global maps roles to
 5. The splash lifts like a curtain while the app content settles in.
 
 The splash element is removed once the animation finishes, so it costs nothing afterwards.
+
+**Responsive layout.** `AppWindow` exposes `compact` (window under 1000 px), `sidebar-width` (224 or 272 px), `column-width` and `reader-column-width`, which the UI tests read. Under 640 px of content width, the side margins shrink from 72 to 40 px, the header title and the tabs get smaller, and list thumbnails narrow from 180 to 120 px. The list column is capped at 980 px and the reader at 720 px. The window's minimum width is 720 px.
 
 **Window chrome.** The window is frameless (`no-frame: true`). The header and the sidebar masthead contain a `WindowMoveArea`, which is placed underneath the visible content so buttons keep their clicks. Edge resizing is handled by Slint (`resize-border-width`). Minimise and maximise use the built-in `minimized`/`maximized` window properties.

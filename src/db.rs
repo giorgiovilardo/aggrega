@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::fetch::{FeedJob, FetchResult, Fetched};
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub struct Store {
     conn: Connection,
@@ -32,6 +32,19 @@ pub struct Article {
     pub published: i64,
     pub read: bool,
     pub feed_title: String,
+}
+
+/// Everything the reader view needs for one article.
+#[derive(Debug, Clone)]
+pub struct ReaderArticle {
+    pub title: String,
+    pub link: String,
+    pub image_url: Option<String>,
+    pub published: i64,
+    pub read: bool,
+    pub feed_title: String,
+    /// `reader::encode`d blocks; `None` for articles stored before the reader existed.
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -110,6 +123,13 @@ impl Store {
                     value TEXT NOT NULL
                 );
                 PRAGMA user_version = 1;",
+            )?;
+        }
+        if version < 2 {
+            // Reader view content. NULL for older articles: the reader fetches the page instead.
+            self.conn.execute_batch(
+                "ALTER TABLE articles ADD COLUMN body TEXT;
+                 PRAGMA user_version = 2;",
             )?;
         }
         Ok(())
@@ -280,6 +300,38 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    pub fn reader_article(&self, id: i64) -> Result<Option<ReaderArticle>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT a.title, a.link, a.image_url, a.published, a.read, f.title, a.body
+                 FROM articles a JOIN feeds f ON f.id = a.feed_id
+                 WHERE a.id = ?1",
+                [id],
+                |r| {
+                    Ok(ReaderArticle {
+                        title: r.get(0)?,
+                        link: r.get(1)?,
+                        image_url: r.get(2)?,
+                        published: r.get(3)?,
+                        read: r.get(4)?,
+                        feed_title: r.get(5)?,
+                        body: r.get(6)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Saves reader content fetched from the article's web page.
+    pub fn set_body(&self, article: i64, body: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE articles SET body = ?2 WHERE id = ?1",
+            params![article, body],
+        )?;
+        Ok(())
+    }
+
     pub fn set_read(&self, article: i64, read: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE articles SET read = ?2 WHERE id = ?1",
@@ -298,8 +350,8 @@ impl Store {
 
 fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result<usize> {
     let mut stmt = conn.prepare_cached(
-        "INSERT INTO articles(feed_id, guid, title, link, snippet, image_url, published, fetched_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "INSERT INTO articles(feed_id, guid, title, link, snippet, image_url, published, fetched_at, body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(feed_id, guid) DO NOTHING",
     )?;
     let ts = now();
@@ -313,7 +365,8 @@ fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result
             a.snippet,
             a.image_url,
             a.published,
-            ts
+            ts,
+            a.body
         ])?;
     }
     Ok(n)
@@ -338,15 +391,81 @@ mod tests {
                     snippet: String::new(),
                     image_url: None,
                     published: 1_700_000_000 + i as i64,
+                    body: format!("p Body {i}\n"),
                 })
                 .collect(),
         }
     }
 
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("aggrega-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reader_body_is_stored_and_updatable() -> Result<()> {
+        let dir = temp_dir("reader");
+        let store = Store::open(&dir.join("t.db"))?;
+        let (feed, _) = store.add_feed("https://x.org/rss", &sample(2))?;
+        let id = store.articles(Some(feed), false, 1)?[0].id;
+
+        let a = store.reader_article(id)?.expect("article exists");
+        assert_eq!(a.title, "Post 1");
+        assert_eq!(a.feed_title, "Sample");
+        assert_eq!(a.link, "https://x.org/1");
+        assert_eq!(a.body.as_deref(), Some("p Body 1\n"));
+        assert!(!a.read);
+
+        store.set_body(id, "p Full page\n")?;
+        store.set_read(id, true)?;
+        let a = store.reader_article(id)?.unwrap();
+        assert_eq!(a.body.as_deref(), Some("p Full page\n"));
+        assert!(a.read);
+        assert!(store.reader_article(9999)?.is_none());
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrates_v1_databases() -> Result<()> {
+        let dir = temp_dir("migrate");
+        let path = dir.join("t.db");
+        {
+            // A database as the first release created it.
+            let conn = Connection::open(&path)?;
+            conn.execute_batch(
+                "CREATE TABLE feeds (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE,
+                    title TEXT NOT NULL, site_url TEXT, etag TEXT, last_modified TEXT,
+                    last_fetched INTEGER, last_error TEXT, added_at INTEGER NOT NULL);
+                 CREATE TABLE articles (id INTEGER PRIMARY KEY,
+                    feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                    guid TEXT NOT NULL, title TEXT NOT NULL, link TEXT NOT NULL,
+                    snippet TEXT NOT NULL, image_url TEXT, published INTEGER NOT NULL,
+                    fetched_at INTEGER NOT NULL, read INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (feed_id, guid));
+                 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO feeds VALUES (1, 'https://x.org/rss', 'Old', NULL, NULL, NULL, NULL, NULL, 0);
+                 INSERT INTO articles (feed_id, guid, title, link, snippet, published, fetched_at)
+                    VALUES (1, 'g', 'Old post', 'https://x.org/old', '', 0, 0);
+                 PRAGMA user_version = 1;",
+            )?;
+        }
+        let store = Store::open(&path)?;
+        let id = store.articles(None, false, 10)?[0].id;
+        let a = store.reader_article(id)?.unwrap();
+        assert_eq!(a.title, "Old post");
+        assert_eq!(a.body, None, "old articles have no stored body");
+        drop(store);
+        // Opening again is a no-op.
+        Store::open(&path)?;
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
     #[test]
     fn add_list_read_remove() -> Result<()> {
-        let dir = std::env::temp_dir().join(format!("aggrega-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir)?;
+        let dir = temp_dir("test");
         let store = Store::open(&dir.join("t.db"))?;
         let (id, n) = store.add_feed("https://x.org/rss", &sample(3))?;
         assert_eq!(n, 3);

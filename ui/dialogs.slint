@@ -97,7 +97,7 @@ export component AddSourceDialog inherits Rectangle {
     callback submit(string);
     callback closed();
 
-    property <bool> shown: false;
+    out property <bool> shown: false;
 
     public function open() {
         self.shown = true;
@@ -219,7 +219,7 @@ export component ConfirmRemoveDialog inherits Rectangle {
     callback confirmed(int);
     callback closed();
 
-    property <bool> shown: false;
+    out property <bool> shown: false;
     property <int> feed-id: -1;
     property <string> name;
 

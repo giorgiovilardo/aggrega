@@ -3,6 +3,7 @@
 
 mod db;
 mod fetch;
+mod reader;
 mod text;
 mod thumbs;
 
@@ -16,6 +17,7 @@ use anyhow::{Context, Result};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use db::{RefreshSummary, Store};
+use reader::Block;
 
 slint::include_modules!();
 
@@ -80,6 +82,13 @@ struct App {
     last_refresh: Cell<Option<i64>>,
     /// The last refresh couldn't reach any source.
     offline: Cell<bool>,
+    reader_blocks: Rc<VecModel<ReaderBlock>>,
+    /// The article open in the reader; async results for any other are dropped.
+    reader_id: Cell<Option<i64>>,
+    /// Its link and lead image, and how much text the reader currently shows.
+    reader_link: RefCell<String>,
+    reader_lead: RefCell<Option<String>>,
+    reader_len: Cell<usize>,
 }
 
 impl App {
@@ -366,12 +375,229 @@ impl App {
         let Some(item) = self.articles.row_data(row) else {
             return;
         };
-        if let Err(e) = open::that_detached(item.link.as_str()) {
-            self.toast(format!("Couldn't open the browser: {e}"));
-        }
+        self.show_reader(item.id as i64);
         if !item.read {
             self.set_read(row, true);
         }
+    }
+
+    // ---- reader view -------------------------------------------------------
+
+    /// Opens the reader with the feed's copy of the article, then fetches the
+    /// full page in the background if the feed only had a summary.
+    fn show_reader(&self, id: i64) {
+        let article = match self.store.reader_article(id) {
+            Ok(Some(a)) => a,
+            Ok(None) => return,
+            Err(e) => return self.report("Couldn't open the article", e),
+        };
+        let ui = self.ui();
+        let lead = article.image_url.clone();
+        let blocks = reader::tidy(
+            reader::decode(article.body.as_deref().unwrap_or("")),
+            &article.title,
+            lead.as_deref(),
+        );
+        let fetch_page = (article.body.is_none() || reader::needs_full_page(&blocks))
+            && reader::is_scrapable(&article.link);
+
+        self.reader_id.set(Some(id));
+        *self.reader_link.borrow_mut() = article.link.clone();
+        *self.reader_lead.borrow_mut() = lead.clone();
+        ui.set_reader(ReaderInfo {
+            id: id as i32,
+            title: article.title.as_str().into(),
+            source: article.feed_title.as_str().into(),
+            time: text::ago(article.published, now()).into(),
+            host: host_of(&article.link).into(),
+            tint: text::tint(&article.feed_title),
+            read: true,
+            lead: Default::default(),
+        });
+        ui.set_reader_loading(fetch_page);
+        ui.set_reader_note(
+            if !fetch_page && blocks.is_empty() {
+                "This story has no text in its feed. Open the original to read it."
+            } else {
+                ""
+            }
+            .into(),
+        );
+        self.set_reader_blocks(&blocks);
+        self.load_pictures(id, lead.into_iter().collect());
+        ui.invoke_show_reader();
+
+        if fetch_page {
+            let agent = self.agent.clone();
+            let link = article.link;
+            std::thread::spawn(move || {
+                let result = fetch::fetch_page(&agent, &link).map(|page| {
+                    let base = url::Url::parse(&link).expect("scrapable links are valid URLs");
+                    reader::extract_article(&page, &base)
+                });
+                let _ = slint::invoke_from_event_loop(move || {
+                    with_app(|app| app.page_ready(id, result))
+                });
+            });
+        }
+    }
+
+    /// Shows `blocks` in the reader and starts loading their images.
+    fn set_reader_blocks(&self, blocks: &[Block]) {
+        self.reader_len.set(reader::text_len(blocks));
+        let mut images = Vec::new();
+        let rows: Vec<ReaderBlock> = blocks
+            .iter()
+            .map(|b| {
+                let (kind, text) = match b {
+                    Block::Paragraph(t) => (BlockKind::Paragraph, t),
+                    Block::Heading(t) => (BlockKind::Heading, t),
+                    Block::Quote(t) => (BlockKind::Quote, t),
+                    Block::Bullet(t) => (BlockKind::Bullet, t),
+                    Block::Code(t) => (BlockKind::Code, t),
+                    Block::Image(u) => {
+                        images.push(u.clone());
+                        return ReaderBlock {
+                            kind: BlockKind::Image,
+                            image_url: u.as_str().into(),
+                            ..Default::default()
+                        };
+                    }
+                };
+                ReaderBlock {
+                    kind,
+                    text: text.as_str().into(),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        self.reader_blocks.set_vec(rows);
+        if let Some(id) = self.reader_id.get() {
+            self.load_pictures(id, images);
+        }
+    }
+
+    fn page_ready(&self, id: i64, result: Result<Vec<Block>>) {
+        let current = self.reader_id.get() == Some(id);
+        let shown = if current { self.reader_len.get() } else { 0 };
+        let note = match result {
+            Ok(page) if reader::text_len(&page) > shown => {
+                // Keep it, so the article opens instantly (and offline) next time.
+                if let Err(e) = self.store.set_body(id, &reader::encode(&page)) {
+                    eprintln!("aggrega: couldn't save article text: {e:#}");
+                }
+                if current {
+                    let title = self.ui().get_reader().title;
+                    let lead = self.reader_lead.borrow().clone();
+                    self.set_reader_blocks(&reader::tidy(page, &title, lead.as_deref()));
+                }
+                ""
+            }
+            Ok(_) if shown == 0 => {
+                "Couldn't find the story on its page. Open the original to read it."
+            }
+            Ok(_) => "",
+            Err(e) if fetch::is_unreachable(&e) => {
+                "You're offline, so this is the summary from the feed."
+            }
+            Err(_) => "The full story couldn't be loaded, so this is the summary from the feed.",
+        };
+        if current {
+            let ui = self.ui();
+            ui.set_reader_loading(false);
+            ui.set_reader_note(note.into());
+        }
+    }
+
+    fn load_pictures(&self, id: i64, urls: Vec<String>) {
+        if urls.is_empty() {
+            return;
+        }
+        let agent = self.agent.clone();
+        std::thread::spawn(move || {
+            fetch::par_for_each(&urls, 4, |url| {
+                let picture = thumbs::load_picture(&agent, url);
+                let url = url.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    with_app(|app| app.picture_ready(id, &url, picture))
+                });
+            });
+        });
+    }
+
+    fn picture_ready(&self, id: i64, url: &str, picture: Option<thumbs::Picture>) {
+        if self.reader_id.get() != Some(id) {
+            return;
+        }
+        let image = picture.map(slint::Image::from_rgba8);
+        if self.reader_lead.borrow().as_deref() == Some(url) {
+            let ui = self.ui();
+            let mut info = ui.get_reader();
+            info.lead = image.clone().unwrap_or_default();
+            ui.set_reader(info);
+        }
+        for i in (0..self.reader_blocks.row_count()).rev() {
+            let Some(mut row) = self.reader_blocks.row_data(i) else {
+                continue;
+            };
+            if row.kind != BlockKind::Image || row.image_url != url {
+                continue;
+            }
+            match &image {
+                Some(img) => {
+                    row.image = img.clone();
+                    self.reader_blocks.set_row_data(i, row);
+                }
+                // Broken images just disappear.
+                None => {
+                    self.reader_blocks.remove(i);
+                }
+            }
+        }
+    }
+
+    fn close_reader(&self) {
+        self.reader_id.set(None);
+        // Free the pictures; the list underneath is still as the user left it.
+        self.reader_blocks.set_vec(Vec::new());
+        let ui = self.ui();
+        let mut info = ui.get_reader();
+        info.lead = Default::default();
+        ui.set_reader(info);
+    }
+
+    fn open_original(&self) {
+        let link = self.reader_link.borrow().clone();
+        if link.is_empty() {
+            return;
+        }
+        if let Err(e) = open::that_detached(&link) {
+            self.toast(format!("Couldn't open the browser: {e}"));
+        }
+    }
+
+    fn reader_toggle_read(&self) {
+        let Some(id) = self.reader_id.get() else {
+            return;
+        };
+        let ui = self.ui();
+        let mut info = ui.get_reader();
+        let read = !info.read;
+        let row = (0..self.articles.row_count())
+            .find(|&i| self.articles.row_data(i).is_some_and(|r| r.id as i64 == id));
+        match row {
+            // Also updates the list (and animates the row out in the Unread view).
+            Some(row) => self.set_read(row, read),
+            None => {
+                if let Err(e) = self.store.set_read(id, read) {
+                    return self.report("Couldn't save read state", e);
+                }
+                // Marked unread again after it left the Unread list: bring it back.
+                self.reload_all();
+            }
+        }
+        info.read = read;
+        ui.set_reader(info);
     }
 
     fn toggle_read(&self, row: usize) {
@@ -500,6 +726,17 @@ impl App {
     }
 }
 
+/// The site name shown in the reader, e.g. "example.com".
+fn host_of(link: &str) -> String {
+    url::Url::parse(link)
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h.trim_start_matches("www.").to_string())
+        })
+        .unwrap_or_default()
+}
+
 /// Updates a model in place when the shape is unchanged (keeps scroll
 /// position and avoids re-creating delegates), otherwise replaces it.
 fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: Vec<T>) {
@@ -514,15 +751,8 @@ fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: Vec<T>
     }
 }
 
-fn main() -> Result<()> {
-    let paths = Paths::new()?;
-    let store =
-        Store::open(&paths.db).with_context(|| format!("opening {}", paths.db.display()))?;
-    let ui = AppWindow::new()?;
-    // Lets the desktop match the window to aggrega.desktop (taskbar icon/name).
-    // Needs the platform created by `AppWindow::new`, and must precede `run`.
-    slint::set_xdg_app_id("aggrega")?;
-
+/// Creates the app state for `ui` and wires up every callback.
+fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     // Theme: saved preference wins, otherwise follow the desktop.
     if let Some(theme) = store.setting("theme")? {
         ui.global::<Theme>().set_dark(theme == "dark");
@@ -539,8 +769,10 @@ fn main() -> Result<()> {
 
     let articles = Rc::new(VecModel::default());
     let feeds = Rc::new(VecModel::default());
+    let reader_blocks = Rc::new(VecModel::default());
     ui.set_articles(ModelRc::from(articles.clone()));
     ui.set_feeds(ModelRc::from(feeds.clone()));
+    ui.set_reader_blocks(ModelRc::from(reader_blocks.clone()));
 
     let last_refresh = store.setting("last_refresh")?.and_then(|v| v.parse().ok());
     let app = Rc::new(App {
@@ -557,6 +789,11 @@ fn main() -> Result<()> {
         refreshing: Cell::new(false),
         last_refresh: Cell::new(last_refresh),
         offline: Cell::new(false),
+        reader_blocks,
+        reader_id: Cell::new(None),
+        reader_link: RefCell::default(),
+        reader_lead: RefCell::default(),
+        reader_len: Cell::new(0),
     });
     APP.with(|cell| {
         let _ = cell.set(app.clone());
@@ -574,6 +811,9 @@ fn main() -> Result<()> {
     ui.on_mark_all_read(|| with_app(|a| a.mark_all_read()));
     ui.on_add_feed(|url| with_app(|a| a.add_feed(url)));
     ui.on_remove_feed(|id| with_app(|a| a.remove_feed(id)));
+    ui.on_close_reader(|| with_app(|a| a.close_reader()));
+    ui.on_open_original(|| with_app(|a| a.open_original()));
+    ui.on_reader_toggle_read(|| with_app(|a| a.reader_toggle_read()));
     ui.on_theme_changed(|dark| {
         with_app(|a| {
             let _ = a
@@ -590,6 +830,20 @@ fn main() -> Result<()> {
         }
     });
 
+    Ok(app)
+}
+
+fn main() -> Result<()> {
+    let paths = Paths::new()?;
+    let store =
+        Store::open(&paths.db).with_context(|| format!("opening {}", paths.db.display()))?;
+    let ui = AppWindow::new()?;
+    // Lets the desktop match the window to aggrega.desktop (taskbar icon/name).
+    // Needs the platform created by `AppWindow::new`, and must precede `run`.
+    slint::set_xdg_app_id("aggrega")?;
+
+    let app = setup(&ui, store, paths)?;
+
     // Show cached articles instantly, then fetch fresh ones in the background.
     app.reload_all();
     app.refresh();
@@ -602,4 +856,313 @@ fn main() -> Result<()> {
     drop(app);
     ui.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Drives the real window headlessly (Slint's testing backend) against a
+    //! temporary database. Each test runs on its own thread, so each gets its
+    //! own backend and `APP`.
+
+    use super::*;
+    use fetch::{Fetched, NewArticle};
+    use i_slint_backend_testing::{self as testing, ElementHandle};
+    use slint::platform::{Key, WindowEvent};
+
+    const LONG: &str = "Reading is the whole point of an aggregator, and this paragraph is long enough to count as the full text of the story.";
+
+    fn article(i: usize, body: &[Block]) -> NewArticle {
+        NewArticle {
+            guid: format!("g{i}"),
+            title: format!("Story {i}"),
+            // Nothing listens on port 9, so page fetches fail fast.
+            link: format!("http://127.0.0.1:9/story/{i}"),
+            snippet: "Snippet".into(),
+            image_url: None,
+            published: 1_700_000_000 + i as i64,
+            body: reader::encode(body),
+        }
+    }
+
+    fn full_text() -> Vec<Block> {
+        let mut blocks = vec![Block::Heading("Story 1".into())];
+        blocks.extend((0..12).map(|_| Block::Paragraph(LONG.into())));
+        blocks.push(Block::Quote("A quote".into()));
+        blocks.push(Block::Image("http://127.0.0.1:9/pic.png".into()));
+        blocks
+    }
+
+    /// A window and app over a fresh database holding one feed:
+    /// "Story 1" (full text in the feed) and "Story 0" (summary only).
+    fn start(name: &str) -> (AppWindow, Rc<App>, PathBuf) {
+        testing::init_no_event_loop();
+        let dir = std::env::temp_dir().join(format!("aggrega-ui-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("thumbs")).unwrap();
+        let store = Store::open(&dir.join("t.db")).unwrap();
+        store
+            .add_feed(
+                "https://blog.example/rss",
+                &Fetched {
+                    title: "Example Blog".into(),
+                    site_url: None,
+                    etag: None,
+                    last_modified: None,
+                    articles: vec![
+                        article(0, &[Block::Paragraph("Just a teaser…".into())]),
+                        article(1, &full_text()),
+                    ],
+                },
+            )
+            .unwrap();
+        let paths = Paths {
+            db: dir.join("t.db"),
+            thumbs: dir.join("thumbs"),
+        };
+        let ui = AppWindow::new().unwrap();
+        let app = setup(&ui, store, paths).unwrap();
+        app.reload_all();
+        // Headless windows start at 0×0, where every element counts as clipped away.
+        ui.window().set_size(slint::LogicalSize::new(1240., 820.));
+        // Let the opening animation finish so key presses aren't swallowed by it.
+        testing::mock_elapsed_time(Duration::from_secs(3));
+        (ui, app, dir)
+    }
+
+    fn resize(ui: &AppWindow, w: f32, h: f32) {
+        ui.window().set_size(slint::LogicalSize::new(w, h));
+        // The sidebar animates its width.
+        testing::mock_elapsed_time(Duration::from_secs(1));
+    }
+
+    fn press(ui: &AppWindow, key: impl Into<SharedString>) {
+        let text = key.into();
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text });
+    }
+
+    fn row_of(app: &App, title: &str) -> usize {
+        (0..app.articles.row_count())
+            .find(|&i| app.articles.row_data(i).unwrap().title == title)
+            .unwrap()
+    }
+
+    fn kinds(app: &App) -> Vec<BlockKind> {
+        app.reader_blocks.iter().map(|b| b.kind).collect()
+    }
+
+    #[test]
+    fn layout_adapts_to_window_width() {
+        let (ui, _app, dir) = start("layout");
+
+        resize(&ui, 1400., 900.);
+        assert!(!ui.get_compact());
+        assert_eq!(ui.get_sidebar_width(), 272.);
+        assert_eq!(ui.get_column_width(), 980., "wide windows cap the column");
+        assert_eq!(
+            ui.get_reader_column_width(),
+            720.,
+            "reader keeps a readable measure"
+        );
+
+        resize(&ui, 1100., 800.);
+        assert!(!ui.get_compact());
+        // 1100 - 272 sidebar - 72 margins
+        assert_eq!(ui.get_column_width(), 756.);
+
+        resize(&ui, 800., 600.);
+        assert!(ui.get_compact());
+        assert_eq!(ui.get_sidebar_width(), 224.);
+        // 800 - 224 sidebar - 40 (tighter margins below 640px)
+        assert_eq!(ui.get_column_width(), 536.);
+        assert_eq!(ui.get_reader_column_width(), 536.);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn opening_an_article_shows_the_feed_text() {
+        let (ui, app, dir) = start("open");
+        assert!(!ui.get_reader_open());
+        let row = row_of(&app, "Story 1");
+        app.open_article(row);
+
+        assert!(ui.get_reader_open());
+        let info = ui.get_reader();
+        assert_eq!(info.title, "Story 1");
+        assert_eq!(info.source, "Example Blog");
+        assert_eq!(info.host, "127.0.0.1");
+        assert!(info.read);
+        // Full text in the feed: nothing to fetch.
+        assert!(!ui.get_reader_loading());
+        assert_eq!(ui.get_reader_note(), "");
+        // The heading repeating the title is dropped.
+        let k = kinds(&app);
+        assert_eq!(k.len(), 14);
+        assert_eq!(k[0], BlockKind::Paragraph);
+        assert_eq!(k[12], BlockKind::Quote);
+        assert_eq!(k[13], BlockKind::Image);
+        assert_eq!(app.reader_blocks.row_data(0).unwrap().text, LONG);
+
+        // Opening marks the story read, in the database and in the list.
+        let id = info.id as i64;
+        assert!(app.store.reader_article(id).unwrap().unwrap().read);
+        assert!(app.articles.row_data(row).unwrap().read);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn summaries_are_replaced_by_the_full_page() {
+        let (ui, app, dir) = start("fetch");
+        app.open_article(row_of(&app, "Story 0"));
+        let id = ui.get_reader().id as i64;
+        // Only a teaser in the feed: show it while the page loads.
+        assert!(ui.get_reader_loading());
+        assert_eq!(kinds(&app), vec![BlockKind::Paragraph]);
+
+        let page = vec![
+            Block::Paragraph(LONG.into()),
+            Block::Heading("More".into()),
+            Block::Paragraph(LONG.into()),
+        ];
+        app.page_ready(id, Ok(page.clone()));
+        assert!(!ui.get_reader_loading());
+        assert_eq!(ui.get_reader_note(), "");
+        assert_eq!(
+            kinds(&app),
+            vec![
+                BlockKind::Paragraph,
+                BlockKind::Heading,
+                BlockKind::Paragraph
+            ]
+        );
+        // Saved, so it opens instantly (and offline) next time.
+        let stored = app.store.reader_article(id).unwrap().unwrap().body.unwrap();
+        assert_eq!(reader::decode(&stored), page);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_page_loads_keep_the_summary() {
+        let (ui, app, dir) = start("offline");
+        app.open_article(row_of(&app, "Story 0"));
+        let id = ui.get_reader().id as i64;
+
+        let offline = anyhow::Error::new(fetch::Unreachable("offline".into()));
+        app.page_ready(id, Err(offline));
+        assert!(!ui.get_reader_loading());
+        assert!(ui.get_reader_note().contains("offline"));
+        assert_eq!(kinds(&app), vec![BlockKind::Paragraph]);
+
+        // A page with less text than the feed doesn't replace it.
+        app.page_ready(id, Ok(vec![]));
+        assert_eq!(kinds(&app), vec![BlockKind::Paragraph]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn late_results_for_another_article_are_ignored() {
+        let (ui, app, dir) = start("stale");
+        app.open_article(row_of(&app, "Story 0"));
+        let teaser_id = ui.get_reader().id as i64;
+        app.open_article(row_of(&app, "Story 1"));
+
+        app.page_ready(teaser_id, Ok(vec![Block::Paragraph(LONG.into())]));
+        app.picture_ready(teaser_id, "http://127.0.0.1:9/pic.png", None);
+        assert_eq!(ui.get_reader().title, "Story 1");
+        assert_eq!(app.reader_blocks.row_count(), 14, "Story 1 is untouched");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pictures_fill_in_or_disappear() {
+        let (_ui, app, dir) = start("pictures");
+        app.open_article(row_of(&app, "Story 1"));
+        let id = app.reader_id.get().unwrap();
+        let url = "http://127.0.0.1:9/pic.png";
+        let last = app.reader_blocks.row_count() - 1;
+        assert_eq!(
+            app.reader_blocks.row_data(last).unwrap().image.size().width,
+            0
+        );
+
+        app.picture_ready(id, url, Some(thumbs::Picture::new(4, 3)));
+        assert_eq!(
+            app.reader_blocks.row_data(last).unwrap().image.size().width,
+            4
+        );
+
+        app.picture_ready(id, url, None);
+        assert_eq!(app.reader_blocks.row_count(), last, "broken image removed");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn toggling_read_from_the_reader() {
+        let (ui, app, dir) = start("toggle");
+        // "All" view, so the row stays in the list.
+        ui.set_unread_only(false);
+        app.reload_articles();
+        let row = row_of(&app, "Story 1");
+        app.open_article(row);
+        let id = app.reader_id.get().unwrap();
+
+        app.reader_toggle_read();
+        assert!(!ui.get_reader().read);
+        assert!(!app.store.reader_article(id).unwrap().unwrap().read);
+        assert!(!app.articles.row_data(row).unwrap().read);
+
+        app.reader_toggle_read();
+        assert!(ui.get_reader().read);
+        assert!(app.store.reader_article(id).unwrap().unwrap().read);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn escape_and_back_button_close_the_reader() {
+        let (ui, app, dir) = start("close");
+        app.open_article(row_of(&app, "Story 1"));
+        press(&ui, Key::Escape);
+        assert!(!ui.get_reader_open());
+        assert_eq!(app.reader_blocks.row_count(), 0, "content is released");
+        assert_eq!(app.reader_id.get(), None);
+
+        app.open_article(row_of(&app, "Story 0"));
+        assert!(ui.get_reader_open());
+        let back = ElementHandle::find_by_accessible_label(&ui, "Back to the list")
+            .next()
+            .expect("back button");
+        back.invoke_accessible_default_action();
+        assert!(!ui.get_reader_open());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reader_toolbar_buttons_are_wired() {
+        let (ui, app, dir) = start("toolbar");
+        ui.set_unread_only(false);
+        app.reload_articles();
+        app.open_article(row_of(&app, "Story 1"));
+        let id = app.reader_id.get().unwrap();
+        let mark = ElementHandle::find_by_accessible_label(&ui, "Mark as unread")
+            .next()
+            .expect("mark as unread button");
+        mark.invoke_accessible_default_action();
+        assert!(!app.store.reader_article(id).unwrap().unwrap().read);
+        // The label follows the state.
+        assert!(
+            ElementHandle::find_by_accessible_label(&ui, "Mark as read")
+                .next()
+                .is_some()
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn host_names_for_the_reader() {
+        assert_eq!(host_of("https://www.example.com/a/b"), "example.com");
+        assert_eq!(host_of("https://blog.example.org/"), "blog.example.org");
+        assert_eq!(host_of("not a link"), "");
+    }
 }

@@ -176,8 +176,10 @@ export component Sidebar inherits Rectangle {
                 }
             }
             VerticalLayout {
-                padding-left: 22px;
-                padding-right: 22px;
+                // Fixed (not width-dependent) so the masthead can't feed back into
+                // the window's layout; sized to fit the compact 224px sidebar.
+                padding-left: 18px;
+                padding-right: 18px;
                 padding-bottom: 26px;
                 spacing: 6px;
                 Text {
@@ -205,7 +207,8 @@ export component Sidebar inherits Rectangle {
                     font-family: Fonts.sans-bold;
                     font-weight: 700;
                     font-size: 9.5px;
-                    letter-spacing: 1.9px;
+                    letter-spacing: 1.4px;
+                    overflow: elide;
                     color: Theme.text-muted;
                 }
             }
@@ -226,6 +229,7 @@ export component Sidebar inherits Rectangle {
             text: "SOURCES";
             IconButton {
                 icon: Icons.plus;
+                label: "Add source";
                 size: 26px;
                 icon-size: 15px;
                 clicked => { root.add(); }

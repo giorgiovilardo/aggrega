@@ -75,7 +75,9 @@ cargo fmt --check
 cargo clippy -- -D warnings
 ```
 
-The tests don't touch the network or your real data. The storage test uses a temporary directory.
+The tests don't touch the network or your real data. The storage tests use a temporary directory.
+
+The UI tests in `src/main.rs` create the real window with Slint's headless testing backend (`i-slint-backend-testing`, a dev-dependency pinned to the exact `slint` version), so they need no display. They check the responsive layout at several window sizes and drive the reader view: opening an article, swapping a summary for the full page, pictures, read state, and closing it with `Esc` or the back button. When you upgrade `slint`, bump `i-slint-backend-testing` to the same version.
 
 ## 5. Install on Arch Linux
 

@@ -1,0 +1,40 @@
+# Runs the test suite on every branch push. Tags are left to release.yml.
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Pinned: the job runs in a container, so the host image only needs to be stable.
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rustup pkgconf \
+            fontconfig freetype2 libxkbcommon wayland libglvnd \
+            libx11 libxcursor libxi libxrandr \
+            ttf-dejavu
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: actions/checkout@v7
+
+      - uses: Swatinem/rust-cache@v2
+
+      # UI tests use Slint's headless testing backend, so no display is needed,
+      # but font lookup needs at least one system font (hence ttf-dejavu).
+      - name: Test
+        run: cargo test --locked

@@ -75,6 +75,8 @@ export component ArticleCard inherits Rectangle {
     // The lead story: large photo and display headline.
     in property <bool> featured: false;
     in property <length> max-card-width: 980px;
+    // Total side margin around the card (matches the header).
+    in property <length> inset: 72px;
     callback open();
     callback toggle-read();
 
@@ -95,7 +97,7 @@ export component ArticleCard inherits Rectangle {
     animate height { duration: 380ms; delay: 120ms; easing: cubic-bezier(0.65, 0, 0.35, 1); }
 
     row := Rectangle {
-        width: min(parent.width - 72px, root.max-card-width);
+        width: min(parent.width - root.inset, root.max-card-width);
         height: root.full-height;
         x: (parent.width - self.width) / 2 + (root.item.leaving ? 40px : 0px);
         y: (1 - root.appear) * 16px;
@@ -216,7 +218,7 @@ export component ArticleCard inherits Rectangle {
             }
 
             if root.item.has-thumb: Thumb {
-                width: 180px;
+                width: row.width < 560px ? 120px : 180px;
                 item: root.item;
                 hovered: root.hovered;
             }

@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use feed_rs::model::Entry;
 use url::Url;
 
-use crate::text;
+use crate::{reader, text};
 
 const USER_AGENT: &str = concat!(
     "Aggrega/",
@@ -18,6 +18,7 @@ const USER_AGENT: &str = concat!(
 );
 const MAX_FEED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
 const SNIPPET_CHARS: usize = 280;
 
 /// An article parsed from a feed, ready to be stored.
@@ -29,6 +30,8 @@ pub struct NewArticle {
     pub snippet: String,
     pub image_url: Option<String>,
     pub published: i64,
+    /// Reader view blocks from the feed's own content (`reader::encode`d).
+    pub body: String,
 }
 
 /// A successfully downloaded and parsed feed.
@@ -296,7 +299,7 @@ fn discover_links(html: &str, base: &Url) -> Vec<String> {
 }
 
 /// Reads an attribute value from a single HTML tag (quoted or unquoted).
-fn attr(tag: &str, name: &str) -> Option<String> {
+pub(crate) fn attr(tag: &str, name: &str) -> Option<String> {
     let lower = tag.to_ascii_lowercase();
     let mut from = 0;
     while let Some(p) = lower[from..].find(name) {
@@ -408,6 +411,17 @@ fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
             .or(Some(src))
     });
 
+    // The reader wants the fullest version the feed offers.
+    let full_html = if content_html.len() > html.len() {
+        content_html
+    } else {
+        html
+    };
+    let body = reader::encode(&reader::blocks_from_html(
+        full_html,
+        Url::parse(&link).ok().as_ref(),
+    ));
+
     let guid = if e.id.is_empty() {
         link.clone()
     } else {
@@ -420,6 +434,7 @@ fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
         snippet,
         image_url,
         published,
+        body,
     })
 }
 
@@ -484,6 +499,21 @@ fn first_img_src(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Downloads an article's web page for the reader view.
+pub fn fetch_page(agent: &ureq::Agent, url: &str) -> Result<String> {
+    let r = get(
+        agent,
+        url,
+        "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        &[],
+        MAX_PAGE_BYTES,
+    )?;
+    if !(200..300).contains(&r.status) {
+        bail!("the page answered HTTP {}", r.status);
+    }
+    Ok(String::from_utf8_lossy(&r.body).into_owned())
 }
 
 /// Downloads an image (thumbnail source).
@@ -561,5 +591,33 @@ mod tests {
         assert_eq!(a.title, "Hello & welcome");
         assert_eq!(a.snippet, "Body");
         assert_eq!(a.image_url.as_deref(), Some("https://demo.org/pic.jpg"));
+        assert_eq!(
+            reader::decode(&a.body),
+            vec![
+                reader::Block::Paragraph("Body".into()),
+                reader::Block::Image("https://demo.org/pic.jpg".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reader_body_prefers_full_content() {
+        let xml = br#"<?xml version="1.0"?>
+            <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>
+            <title>Demo</title><link>https://demo.org</link>
+            <item><title>Long read</title><link>https://demo.org/2</link><guid>2</guid>
+            <description>Short teaser</description>
+            <content:encoded><![CDATA[<h2>Intro</h2><p>The whole story.</p>]]></content:encoded>
+            </item></channel></rss>"#;
+        let f = parse("https://demo.org/rss", xml).unwrap();
+        let a = &f.articles[0];
+        assert_eq!(a.snippet, "Short teaser");
+        assert_eq!(
+            reader::decode(&a.body),
+            vec![
+                reader::Block::Heading("Intro".into()),
+                reader::Block::Paragraph("The whole story.".into()),
+            ]
+        );
     }
 }

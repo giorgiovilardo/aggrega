@@ -23,3 +23,27 @@ export struct FeedItem {
     tint: color,
     error: bool,
 }
+
+export enum BlockKind { paragraph, heading, quote, bullet, code, image }
+
+// One block of an article in the reader view.
+export struct ReaderBlock {
+    kind: BlockKind,
+    text: string,
+    // For images: the address (to match async loads) and the pixels once loaded.
+    image-url: string,
+    image: image,
+}
+
+// The article shown in the reader view.
+export struct ReaderInfo {
+    id: int,
+    title: string,
+    source: string,
+    time: string,
+    // Domain of the original page, e.g. "example.com".
+    host: string,
+    tint: color,
+    read: bool,
+    lead: image,
+}

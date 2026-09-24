@@ -1,12 +1,13 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
-import { ArticleItem, FeedItem } from "types.slint";
+import { ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo } from "types.slint";
 import { EmptyState, IconButton, Tabs, WindowControls } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { ArticleCard } from "article-card.slint";
 import { AddSourceDialog, ConfirmRemoveDialog } from "dialogs.slint";
+import { ReaderView } from "reader.slint";
 
-export { Theme, ArticleItem, FeedItem }
+export { Theme, ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo }
 
 global Motion {
     // Progress of `t` through the window [a, b], clamped to 0..1.
@@ -25,7 +26,7 @@ export component AppWindow inherits Window {
     icon: @image-url("../assets/aggrega.svg");
     preferred-width: 1240px;
     preferred-height: 820px;
-    min-width: 860px;
+    min-width: 720px;
     min-height: 560px;
     // Frameless: Aggrega draws its own title bar, rounded corners and border.
     no-frame: true;
@@ -49,6 +50,19 @@ export component AppWindow inherits Window {
     in property <bool> adding;
     in-out property <string> add-error;
 
+    // Reader view: the open article and its content blocks.
+    in-out property <bool> reader-open: false;
+    in property <ReaderInfo> reader;
+    in property <[ReaderBlock]> reader-blocks;
+    in property <bool> reader-loading;
+    in property <string> reader-note;
+
+    // Responsive layout. Narrow windows get a slimmer sidebar and margins.
+    out property <bool> compact: self.width < 1000px;
+    out property <length> sidebar-width: self.compact ? 224px : 272px;
+    out property <length> column-width: main.column;
+    out property <length> reader-column-width: reader-view.column;
+
     callback refresh();
     callback open-article(int);
     callback toggle-read(int);
@@ -58,6 +72,10 @@ export component AppWindow inherits Window {
     callback remove-feed(int);
     callback theme-changed(bool);
     callback close-window();
+    // The reader was closed; Rust drops its content.
+    callback close-reader();
+    callback open-original();
+    callback reader-toggle-read();
 
     // `minimized` / `maximized` are built-in Window properties, kept in sync
     // with the real window state by Slint.
@@ -73,6 +91,20 @@ export component AppWindow inherits Window {
         self.toast-message = message;
         self.toast-visible = false;
         self.toast-visible = true;
+    }
+
+    // Called from Rust once the reader has its content.
+    public function show-reader() {
+        self.reader-open = true;
+        reader-view.scroll-to-top();
+        keys.focus();
+    }
+
+    function hide-reader() {
+        if (self.reader-open) {
+            self.reader-open = false;
+            self.close-reader();
+        }
     }
 
     public function close-add-dialog() {
@@ -128,16 +160,64 @@ export component AppWindow inherits Window {
                 return accept;
             }
             if (event.text == Key.Escape) {
-                add-dialog.close();
-                confirm.close();
+                if (add-dialog.shown || confirm.shown) {
+                    add-dialog.close();
+                    confirm.close();
+                } else {
+                    root.hide-reader();
+                }
                 return accept;
+            }
+            if (root.reader-open && !event.modifiers.control && !event.modifiers.alt) {
+                if (event.text == Key.Backspace || event.text == Key.LeftArrow) {
+                    root.hide-reader();
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    reader-view.scroll-by(60px);
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    reader-view.scroll-by(-60px);
+                    return accept;
+                }
+                if (event.text == Key.PageDown || event.text == " ") {
+                    reader-view.scroll-by(event.modifiers.shift ? -reader-view.page-height() : reader-view.page-height());
+                    return accept;
+                }
+                if (event.text == Key.PageUp) {
+                    reader-view.scroll-by(-reader-view.page-height());
+                    return accept;
+                }
+                if (event.text == Key.Home) {
+                    reader-view.scroll-to-top();
+                    return accept;
+                }
+                if (event.text == Key.End) {
+                    reader-view.scroll-by(1000000px);
+                    return accept;
+                }
+                if (event.text == "o") {
+                    root.open-original();
+                    return accept;
+                }
+                if (event.text == "m") {
+                    root.reader-toggle-read();
+                    return accept;
+                }
             }
             reject
         }
 
-        HorizontalLayout {
-            Sidebar {
-                width: 272px;
+        // Positioned by hand rather than in a layout: the sidebar's width follows
+        // the window's, and inside a layout that would feed back into the
+        // window's own size constraints (a binding loop).
+        Rectangle {
+            sidebar := Sidebar {
+                x: 0px;
+                width: root.sidebar-width;
+                height: parent.height;
+                animate width { duration: 220ms; easing: ease-out; }
                 feeds: root.feeds;
                 selected: root.selected-feed;
                 total-unread: root.total-unread;
@@ -155,9 +235,14 @@ export component AppWindow inherits Window {
             }
 
             main := Rectangle {
-                horizontal-stretch: 1;
+                x: sidebar.width;
+                width: parent.width - sidebar.width;
+                height: parent.height;
+                // Total side margin: roomy normally, tighter in narrow windows.
+                property <length> inset: self.width < 640px ? 40px : 72px;
+                property <bool> narrow: self.width < 640px;
                 // Reading column shared by the header and the article list.
-                property <length> column: min(self.width - 72px, 980px);
+                property <length> column: min(self.width - self.inset, 980px);
                 property <length> gutter: (self.width - self.column) / 2;
 
                 content := VerticalLayout {
@@ -200,12 +285,13 @@ export component AppWindow inherits Window {
                                         overflow: elide;
                                         font-family: Fonts.serif-semibold;
                                         font-weight: 600;
-                                        font-size: 30px;
-                                        letter-spacing: 4px;
+                                        font-size: main.narrow ? 24px : 30px;
+                                        letter-spacing: main.narrow ? 2px : 4px;
                                         color: Theme.ink;
                                     }
                                     Text {
                                         text: root.status-text;
+                                        overflow: elide;
                                         font-family: Fonts.serif;
                                         font-italic: true;
                                         font-size: 15px;
@@ -216,6 +302,7 @@ export component AppWindow inherits Window {
                                 VerticalLayout {
                                     alignment: end;
                                     Tabs {
+                                        segment: main.narrow ? 64px : 76px;
                                         options: ["Unread", "All"];
                                         index: root.unread-only ? 0 : 1;
                                         changed(i) => {
@@ -228,6 +315,7 @@ export component AppWindow inherits Window {
                                     alignment: end;
                                     IconButton {
                                         icon: Icons.check-all;
+                                        label: "Mark all as read";
                                         clicked => { root.mark-all-read(); }
                                     }
                                 }
@@ -235,6 +323,7 @@ export component AppWindow inherits Window {
                                     alignment: end;
                                     IconButton {
                                         icon: Icons.refresh;
+                                        label: "Refresh";
                                         spinning: root.refreshing;
                                         clicked => { root.refresh(); }
                                     }
@@ -276,11 +365,32 @@ export component AppWindow inherits Window {
                         vertical-stretch: 1;
                         for article[i] in root.articles: ArticleCard {
                             item: article;
+                            inset: main.inset;
                             featured: i == 0 && article.has-thumb;
                             open => { root.open-article(i); }
                             toggle-read => { root.toggle-read(i); }
                         }
                     }
+                }
+
+                // The reader covers the list, which stays underneath so its scroll
+                // position survives a round trip.
+                reader-view := ReaderView {
+                    visible: root.reader-open;
+                    opacity: root.reader-open ? 1 : 0;
+                    x: root.reader-open ? 0px : 28px;
+                    animate opacity, x { duration: 320ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                    width: parent.width;
+                    height: parent.height;
+                    inset: main.inset;
+                    article: root.reader;
+                    blocks: root.reader-blocks;
+                    loading: root.reader-loading;
+                    note: root.reader-note;
+                    back => { root.hide-reader(); }
+                    open-original => { root.open-original(); }
+                    toggle-read => { root.reader-toggle-read(); }
+                    toggle-maximize => { root.toggle-maximize-window(); }
                 }
 
                 // Window controls, pinned to the top-right corner.
@@ -313,7 +423,7 @@ export component AppWindow inherits Window {
         // Toast
         toast := Rectangle {
             property <length> offset: root.toast-visible ? 0px : 90px;
-            x: 272px + (parent.width - 272px - self.width) / 2;
+            x: root.sidebar-width + (parent.width - root.sidebar-width - self.width) / 2;
             y: parent.height - self.height - 28px + self.offset;
             width: toast-row.preferred-width;
             height: 42px;

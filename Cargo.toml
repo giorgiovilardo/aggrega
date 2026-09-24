@@ -24,6 +24,11 @@ version = "1.18"
 default-features = false
 features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "accessibility"]
 
+[dev-dependencies]
+# Headless Slint backend: lets UI tests create windows without a display.
+# Must match the slint version exactly.
+i-slint-backend-testing = "=1.18.1"
+
 [build-dependencies]
 slint-build = "1.18"
 

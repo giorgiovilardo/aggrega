@@ -5,7 +5,13 @@ export component IconButton inherits Rectangle {
     in property <bool> spinning: false;
     in property <length> size: 36px;
     in property <length> icon-size: 18px;
+    // Spoken by screen readers (and used by UI tests to find the button).
+    in property <string> label;
     callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
 
     width: root.size;
     height: root.size;

@@ -1,0 +1,314 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Icons, Fonts } from "theme.slint";
+import { BlockKind, ReaderBlock, ReaderInfo } from "types.slint";
+import { IconButton, PrimaryButton } from "widgets.slint";
+
+// Body text sizes; the column is narrow enough that one size reads well everywhere.
+global ReaderType {
+    out property <length> body: 18px;
+    out property <length> heading: 23px;
+}
+
+component BlockView inherits VerticalLayout {
+    in property <ReaderBlock> block;
+    in property <length> column;
+
+    if root.block.kind == BlockKind.paragraph: Text {
+        text: root.block.text;
+        wrap: word-wrap;
+        font-family: Fonts.serif;
+        font-size: ReaderType.body;
+        color: Theme.text;
+    }
+
+    if root.block.kind == BlockKind.heading: VerticalLayout {
+        padding-top: 14px;
+        Text {
+            text: root.block.text;
+            wrap: word-wrap;
+            font-family: Fonts.serif-semibold;
+            font-weight: 600;
+            font-size: ReaderType.heading;
+            color: Theme.ink;
+        }
+    }
+
+    if root.block.kind == BlockKind.quote: HorizontalLayout {
+        spacing: 18px;
+        Rectangle {
+            width: 3px;
+            background: Theme.accent;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.block.text;
+            wrap: word-wrap;
+            font-family: Fonts.serif;
+            font-italic: true;
+            font-size: ReaderType.body + 1px;
+            color: Theme.text-muted;
+        }
+    }
+
+    if root.block.kind == BlockKind.bullet: HorizontalLayout {
+        padding-left: 6px;
+        spacing: 12px;
+        Text {
+            text: "•";
+            font-family: Fonts.serif-black;
+            font-size: ReaderType.body;
+            color: Theme.accent;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.block.text;
+            wrap: word-wrap;
+            font-family: Fonts.serif;
+            font-size: ReaderType.body;
+            color: Theme.text;
+        }
+    }
+
+    if root.block.kind == BlockKind.code: Rectangle {
+        background: Theme.chip;
+        border-radius: 4px;
+        VerticalLayout {
+            padding: 14px;
+            Text {
+                text: root.block.text;
+                wrap: word-wrap;
+                font-family: "monospace";
+                font-size: 13.5px;
+                color: Theme.text;
+            }
+        }
+    }
+
+    // Images appear once downloaded; until then the block takes no space.
+    if root.block.kind == BlockKind.image && root.block.image.width > 0: HorizontalLayout {
+        alignment: center;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        Image {
+            source: root.block.image;
+            // Pictures are loaded at 2× density: never blow them up past that.
+            width: min(root.column, self.source.width * 0.5px);
+            height: self.width * self.source.height / max(1, self.source.width);
+            image-fit: contain;
+        }
+    }
+}
+
+// Full-text reading view for one article: toolbar, headline, body blocks.
+export component ReaderView inherits Rectangle {
+    in property <ReaderInfo> article;
+    in property <[ReaderBlock]> blocks;
+    // The full page is still being fetched.
+    in property <bool> loading;
+    // Why only part of the story is shown, if so.
+    in property <string> note;
+    // Side margin of the page (smaller in narrow windows).
+    in property <length> inset: 72px;
+    // Width of the reading column, for tests and the layout below.
+    out property <length> column: min(self.width - root.inset, 720px);
+    // True when the headline row uses the narrow-window type sizes.
+    out property <bool> narrow: self.width < 640px;
+
+    callback back();
+    callback open-original();
+    callback toggle-read();
+    callback toggle-maximize();
+
+    public function scroll-to-top() {
+        scroll.content-y = 0;
+    }
+
+    // Scrolls by `delta` (positive = down), clamped to the content.
+    public function scroll-by(delta: length) {
+        scroll.content-y = max(min(scroll.visible-height - scroll.content-height, 0px), min(0px, scroll.content-y - delta));
+    }
+
+    public function page-height() -> length {
+        return scroll.visible-height - 60px;
+    }
+
+    background: Theme.bg;
+    animate background { duration: 300ms; }
+    // Swallow clicks so nothing underneath reacts.
+    TouchArea { }
+
+    VerticalLayout {
+        // Toolbar — doubles as the window title bar, like the list header.
+        Rectangle {
+            vertical-stretch: 0;
+            WindowMoveArea {
+                TouchArea {
+                    double-clicked => { root.toggle-maximize(); }
+                }
+            }
+            VerticalLayout {
+                padding-left: (root.width - min(root.width - root.inset, 980px)) / 2;
+                padding-right: self.padding-left;
+                padding-top: 38px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    padding-bottom: 12px;
+                    back := Rectangle {
+                        accessible-role: button;
+                        accessible-label: "Back to the list";
+                        accessible-action-default => { root.back(); }
+                        height: 36px;
+                        width: back-row.preferred-width;
+                        border-radius: 18px;
+                        background: back-touch.has-hover ? Theme.hover : transparent;
+                        animate background { duration: 140ms; }
+                        back-row := HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 14px;
+                            spacing: 8px;
+                            Image {
+                                source: Icons.arrow-left;
+                                width: 16px;
+                                height: 16px;
+                                y: (parent.height - self.height) / 2;
+                                colorize: back-touch.has-hover ? Theme.accent : Theme.ink;
+                            }
+                            Text {
+                                text: "BACK";
+                                vertical-alignment: center;
+                                font-family: Fonts.sans-bold;
+                                font-weight: 700;
+                                font-size: 11px;
+                                letter-spacing: 1.6px;
+                                color: back-touch.has-hover ? Theme.accent : Theme.ink;
+                            }
+                        }
+                        back-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.back(); }
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    IconButton {
+                        icon: root.article.read ? Icons.circle : Icons.check;
+                        label: root.article.read ? "Mark as unread" : "Mark as read";
+                        clicked => { root.toggle-read(); }
+                    }
+                    IconButton {
+                        icon: Icons.link;
+                        label: "Open in browser";
+                        clicked => { root.open-original(); }
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.rule;
+                }
+            }
+        }
+
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding-left: (root.width - root.column) / 2;
+                padding-right: self.padding-left;
+                padding-top: 36px;
+                padding-bottom: 72px;
+                spacing: 18px;
+
+                // Kicker: SOURCE · TIME
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: root.article.source.to-uppercase();
+                        overflow: elide;
+                        font-family: Fonts.sans-black;
+                        font-weight: 800;
+                        font-size: 11.5px;
+                        letter-spacing: 1.4px;
+                        color: Theme.source-color(root.article.tint);
+                    }
+                    Text {
+                        text: root.article.time.to-uppercase();
+                        font-family: Fonts.sans-semibold;
+                        font-weight: 600;
+                        font-size: 11.5px;
+                        letter-spacing: 0.8px;
+                        color: Theme.text-faint;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                Text {
+                    text: root.article.title;
+                    wrap: word-wrap;
+                    font-family: Fonts.serif-black;
+                    font-weight: 900;
+                    font-size: root.narrow ? 30px : 40px;
+                    letter-spacing: root.narrow ? -0.4px : -0.8px;
+                    color: Theme.ink;
+                }
+
+                Text {
+                    text: root.loading ? "Fetching the full story from " + root.article.host + "…" : root.note != "" ? root.note : root.article.host;
+                    wrap: word-wrap;
+                    font-family: Fonts.serif;
+                    font-italic: true;
+                    font-size: 15px;
+                    color: root.loading || root.note != "" ? Theme.text-muted : Theme.text-faint;
+                }
+
+                Rectangle {
+                    height: 2px;
+                    background: Theme.ink;
+                }
+
+                if root.article.lead.width > 0: Image {
+                    source: root.article.lead;
+                    width: root.column;
+                    height: min(self.width * self.source.height / max(1, self.source.width), 460px);
+                    image-fit: cover;
+                }
+
+                for block in root.blocks: BlockView {
+                    block: block;
+                    column: root.column;
+                }
+
+                // Shimmer lines while the page loads and there's nothing to show yet.
+                if root.loading && root.blocks.length == 0: VerticalLayout {
+                    spacing: 14px;
+                    for w in [1.0, 0.94, 0.97, 0.6]: Rectangle {
+                        width: root.column * w;
+                        height: 14px;
+                        border-radius: 3px;
+                        background: Theme.chip;
+                        opacity: 0.55 + 0.45 * Math.abs(Math.sin(animation-tick() / 1ms * 0.18deg));
+                    }
+                }
+
+                VerticalLayout {
+                    padding-top: 18px;
+                    spacing: 22px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.rule;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        PrimaryButton {
+                            text: root.article.host != "" ? "Read on " + root.article.host : "Open original";
+                            icon: Icons.link;
+                            has-icon: true;
+                            clicked => { root.open-original(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
