@@ -13,17 +13,21 @@ permissions:
 
 jobs:
   build-arch:
-    runs-on: ubuntu-latest
+    # Pinned: the job runs in a container, so the host image only needs to be stable.
+    runs-on: ubuntu-24.04
     container: archlinux:latest
     steps:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel git rust pkgconf \
+            base-devel git rustup pkgconf \
             fontconfig freetype2 libxkbcommon wayland libglvnd \
             libx11 libxcursor libxi libxrandr
 
-      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: actions/checkout@v7
 
       - name: Set version from tag
         id: version
@@ -48,12 +52,13 @@ jobs:
           mkdir -p "dist/$name"
           install -m755 target/release/aggrega "dist/$name/aggrega"
           install -m644 packaging/aggrega.desktop assets/aggrega.svg README.md "dist/$name/"
-          # A tarball keeps the executable bit, which artifact zips would drop.
+          # A tarball keeps the executable bit.
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.package.outputs.name }}
+          # Upload the tarball as-is (no zip wrapper); the artifact takes the file's name.
+          archive: false
           path: dist/${{ steps.package.outputs.name }}.tar.gz
           if-no-files-found: error

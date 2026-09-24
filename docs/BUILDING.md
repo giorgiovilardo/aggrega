@@ -112,7 +112,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar shows it under the logo. When the run finishes, download `aggrega-<version>-x86_64` from the run's **Artifacts** section. It's a zip that contains a `.tar.gz` with the binary, the `.desktop` file and the icon. Local builds show the version from `Cargo.toml`.
+The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar shows it under the logo. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file and the icon. Local builds show the version from `Cargo.toml`.
 
 ## 6. Data and reset
 
