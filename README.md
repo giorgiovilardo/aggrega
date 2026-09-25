@@ -102,11 +102,11 @@ aggrega/
 
 ## Roadmap ideas
 
-- More build targets (Flatpak, AppImage, Windows, macOS)
-- OPML import/export
-- Folders/categories, search
-- Periodic background refresh
-- Next/previous story from the reader
+- More build targets: [Windows (#3)](https://github.com/moebiusmania/aggrega/issues/3), [macOS (#4)](https://github.com/moebiusmania/aggrega/issues/4), [AppImage (#5)](https://github.com/moebiusmania/aggrega/issues/5), [Flatpak (#6)](https://github.com/moebiusmania/aggrega/issues/6)
+- [OPML import/export (#7)](https://github.com/moebiusmania/aggrega/issues/7)
+- [Folders/categories (#8)](https://github.com/moebiusmania/aggrega/issues/8), [search (#9)](https://github.com/moebiusmania/aggrega/issues/9)
+- [Periodic background refresh (#10)](https://github.com/moebiusmania/aggrega/issues/10)
+- [Next/previous story from the reader (#11)](https://github.com/moebiusmania/aggrega/issues/11)
 
 ## Licensing
 
