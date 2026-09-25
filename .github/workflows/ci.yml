@@ -1,10 +1,12 @@
-# Runs the test suite on every branch push. Tags are left to release.yml.
+# Runs the test suite on pushes to main and on every pull request (including
+# ones from forks). Tags are left to release.yml.
 name: CI
 
 on:
   push:
     branches:
-      - "**"
+      - main
+  pull_request:
 
 permissions:
   contents: read
