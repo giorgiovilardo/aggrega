@@ -70,6 +70,7 @@ Both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`. To start fresh, quit Aggre
 
 - [docs/BUILDING.md](docs/BUILDING.md): prerequisites, dev and release builds, tests, packaging, troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the code is organised, the threading model, the storage schema and performance notes
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to report bugs, propose changes and open a pull request
 
 ## Project layout
 
@@ -107,6 +108,10 @@ aggrega/
 - [Folders/categories (#8)](https://github.com/moebiusmania/aggrega/issues/8), [search (#9)](https://github.com/moebiusmania/aggrega/issues/9)
 - [Periodic background refresh (#10)](https://github.com/moebiusmania/aggrega/issues/10)
 - [Next/previous story from the reader (#11)](https://github.com/moebiusmania/aggrega/issues/11)
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started.
 
 ## Licensing
 
