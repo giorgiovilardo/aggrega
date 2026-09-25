@@ -162,7 +162,6 @@ export component Sidebar inherits Rectangle {
     }
 
     VerticalLayout {
-        padding-top: 24px;
         padding-bottom: 16px;
         spacing: 2px;
 
@@ -178,6 +177,9 @@ export component Sidebar inherits Rectangle {
             VerticalLayout {
                 // Fixed (not width-dependent) so the masthead can't feed back into
                 // the window's layout; sized to fit the compact 224px sidebar.
+                // The top padding lives inside the drag area; on macOS it also
+                // leaves room for the traffic lights above the title.
+                padding-top: Platform.os == OperatingSystemType.macos ? 48px : 24px;
                 padding-left: 18px;
                 padding-right: 18px;
                 padding-bottom: 26px;

@@ -1,7 +1,7 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
 import { ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo } from "types.slint";
-import { EmptyState, IconButton, Tabs, WindowControls } from "widgets.slint";
+import { EmptyState, IconButton, MacWindowControls, Tabs, WindowControls } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { ArticleCard } from "article-card.slint";
 import { AddSourceDialog, ConfirmRemoveDialog } from "dialogs.slint";
@@ -393,8 +393,9 @@ export component AppWindow inherits Window {
                     toggle-maximize => { root.toggle-maximize-window(); }
                 }
 
-                // Window controls, pinned to the top-right corner.
-                WindowControls {
+                // Window controls, pinned to the top-right corner (macOS gets
+                // its traffic lights top-left instead, below).
+                if Platform.os != OperatingSystemType.macos: WindowControls {
                     x: parent.width - self.preferred-width - 6px;
                     y: 6px;
                     maximized: root.maximized;
@@ -418,6 +419,16 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+
+        // macOS traffic lights, in the native spot over the sidebar masthead.
+        if Platform.os == OperatingSystemType.macos: MacWindowControls {
+            x: 16px;
+            y: 16px;
+            maximized: root.maximized;
+            minimize => { root.minimized = true; }
+            toggle-maximize => { root.toggle-maximize-window(); }
+            close => { root.close-window(); }
         }
 
         // Toast

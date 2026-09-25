@@ -348,3 +348,102 @@ export component WindowControls inherits HorizontalLayout {
         clicked => { root.close(); }
     }
 }
+
+component TrafficLight inherits Rectangle {
+    in property <color> fill;
+    in property <color> ring;
+    in property <color> glyph-color;
+    in property <image> glyph;
+    // The whole cluster is hovered: every light shows its glyph, as on macOS.
+    in property <bool> reveal;
+    in property <bool> pressed;
+    in property <string> label;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background: root.pressed ? root.fill.darker(25%) : root.fill;
+    border-width: 0.5px;
+    border-color: root.ring;
+
+    Image {
+        source: root.glyph;
+        width: 12px;
+        height: 12px;
+        colorize: root.glyph-color;
+        opacity: root.reveal ? 1 : 0;
+    }
+}
+
+// Close / minimise / zoom as macOS "traffic lights": top-left, native colours,
+// glyphs shown while the pointer is over the cluster. One touch area spans the
+// cluster so hovering any light (or the gaps) reveals all three glyphs.
+export component MacWindowControls inherits Rectangle {
+    in property <bool> maximized;
+    callback minimize();
+    callback toggle-maximize();
+    callback close();
+
+    // Light diameter plus gap: centres sit 20px apart.
+    property <length> pitch: 20px;
+    // Which light is under `x` (0, 1, 2), or -1 over a gap or outside.
+    pure function light-at(x: length) -> int {
+        let i = floor(x / root.pitch);
+        return i >= 0 && i <= 2 && x - i * root.pitch <= 12px ? i : -1;
+    }
+    property <int> pressed-light: touch.pressed ? root.light-at(touch.pressed-x) : -1;
+
+    width: 2 * root.pitch + 12px;
+    height: 12px;
+
+    touch := TouchArea {
+        clicked => {
+            let i = root.light-at(self.pressed-x);
+            // Released over the same light it was pressed on, as with native buttons.
+            if (i >= 0 && i == root.light-at(self.mouse-x)) {
+                if (i == 0) { root.close(); }
+                if (i == 1) { root.minimize(); }
+                if (i == 2) { root.toggle-maximize(); }
+            }
+        }
+    }
+
+    TrafficLight {
+        x: 0;
+        label: "Close";
+        fill: #ff5f57;
+        ring: #e2463f;
+        glyph: Icons.mac-close;
+        glyph-color: #4d0000;
+        reveal: touch.has-hover;
+        pressed: root.pressed-light == 0;
+        clicked => { root.close(); }
+    }
+    TrafficLight {
+        x: root.pitch;
+        label: "Minimize";
+        fill: #febc2e;
+        ring: #e1a116;
+        glyph: Icons.mac-minimize;
+        glyph-color: #995700;
+        reveal: touch.has-hover;
+        pressed: root.pressed-light == 1;
+        clicked => { root.minimize(); }
+    }
+    TrafficLight {
+        x: 2 * root.pitch;
+        label: root.maximized ? "Restore" : "Zoom";
+        fill: #28c840;
+        ring: #14ae2b;
+        glyph: root.maximized ? Icons.mac-unzoom : Icons.mac-zoom;
+        glyph-color: #006500;
+        reveal: touch.has-hover;
+        pressed: root.pressed-light == 2;
+        clicked => { root.toggle-maximize(); }
+    }
+}
