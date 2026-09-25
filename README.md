@@ -110,4 +110,6 @@ aggrega/
 
 ## Licensing
 
-Aggrega doesn't have a license yet. Choose one before you distribute it. Slint itself is available under GPLv3, a royalty-free license for desktop apps (which requires Slint attribution, such as an "About Slint" notice or badge), or a commercial license. Your choice for Aggrega decides which of these you can use. See <https://slint.dev/pricing>.
+Aggrega is released under the [MIT License](LICENSE).
+
+Slint itself is available under GPLv3, a royalty-free license for desktop apps (which requires Slint attribution, such as an "About Slint" notice or badge), or a commercial license. Your choice for Aggrega decides which of these you can use. See <https://slint.dev/pricing>.

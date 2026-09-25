@@ -51,7 +51,7 @@ jobs:
           name="aggrega-${{ steps.version.outputs.version }}-x86_64"
           mkdir -p "dist/$name"
           install -m755 target/release/aggrega "dist/$name/aggrega"
-          install -m644 packaging/aggrega.desktop assets/aggrega.svg README.md "dist/$name/"
+          install -m644 packaging/aggrega.desktop assets/aggrega.svg README.md LICENSE "dist/$name/"
           # A tarball keeps the executable bit.
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           echo "name=$name" >> "$GITHUB_OUTPUT"

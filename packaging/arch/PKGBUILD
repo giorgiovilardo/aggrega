@@ -5,8 +5,7 @@ pkgver=0.2.0
 pkgrel=1
 pkgdesc="Fast, lightweight, local-first RSS/Atom feed reader (Rust + Slint)"
 arch=('x86_64' 'aarch64')
-# TODO: pick a license for Aggrega (see "Licensing" in README.md).
-license=('LicenseRef-unspecified')
+license=('MIT')
 depends=(
   'gcc-libs' 'glibc'
   'fontconfig' 'freetype2'
@@ -44,4 +43,5 @@ package() {
   install -Dm755 "$srcdir/target/release/aggrega" "$pkgdir/usr/bin/aggrega"
   install -Dm644 "$_root/packaging/aggrega.desktop" "$pkgdir/usr/share/applications/aggrega.desktop"
   install -Dm644 "$_root/assets/aggrega.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/aggrega.svg"
+  install -Dm644 "$_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
