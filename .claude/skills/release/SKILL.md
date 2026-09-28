@@ -1,11 +1,16 @@
 ---
 name: release
-description: Cut a new Aggrega release by tagging vX.Y.Z, watching the Release build workflow and fetching the Arch Linux tarball. Use when asked to release, tag, ship or publish a new version.
+description: Cut a new Aggrega release by tagging vX.Y.Z, watching the Release build workflow and fetching the Arch Linux tarball and macOS app. Use when asked to release, tag, ship or publish a new version.
 ---
 
 # Release Aggrega
 
-Pushing a tag matching `v[0-9]+.[0-9]+.[0-9]+*` triggers `.github/workflows/release.yml`. It builds in an `archlinux` container, rewrites the `[package]` version in `Cargo.toml` from the tag (that's what the sidebar shows), and uploads `aggrega-<version>-x86_64.tar.gz` as a workflow **artifact**. It does not create a GitHub Release.
+Pushing a tag matching `v[0-9]+.[0-9]+.[0-9]+*` triggers `.github/workflows/release.yml`. Both of its jobs rewrite the `[package]` version in `Cargo.toml` from the tag (that's what the sidebar shows), and each uploads a workflow **artifact**:
+
+- `build-arch` builds in an `archlinux` container and uploads `aggrega-<version>-x86_64.tar.gz`.
+- `build-macos` runs `packaging/macos/bundle.sh` on `macos-latest` and uploads `aggrega-<version>-macos-universal.zip` (a universal, ad-hoc signed `Aggrega.app`).
+
+It does not create a GitHub Release.
 
 ## 1. Pick the version
 
@@ -39,4 +44,4 @@ gh run watch <run-id> --exit-status
 gh run download <run-id> --dir <scratch dir>
 ```
 
-Report the result. On success, give the run URL and the artifact name. On failure, show the failing step's log (`gh run view <run-id> --log-failed`). Don't delete or move the tag without asking the user.
+Report the result. On success, give the run URL and both artifact names. The jobs are independent, so one platform can fail while the other succeeds. On failure, show the failing step's log (`gh run view <run-id> --log-failed`). Don't delete or move the tag without asking the user.

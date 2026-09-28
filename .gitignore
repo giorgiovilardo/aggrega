@@ -7,3 +7,6 @@
 /packaging/arch/pkg
 /packaging/arch/*.pkg.tar.*
 /packaging/arch/*.log
+
+# macOS bundle output (packaging/macos/bundle.sh)
+/dist

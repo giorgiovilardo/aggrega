@@ -2,7 +2,7 @@
 PREFIX ?= $(HOME)/.local
 BIN     = target/release/aggrega
 
-.PHONY: run dev release test lint install uninstall package clean
+.PHONY: run dev release test lint install uninstall package macos-app clean
 
 run: release
 	./$(BIN)
@@ -32,6 +32,9 @@ uninstall:
 
 package:
 	cd packaging/arch && makepkg -f
+
+macos-app:
+	packaging/macos/bundle.sh
 
 clean:
 	cargo clean

@@ -1,4 +1,4 @@
-# Builds an Arch Linux binary whenever a version tag (v0.0.1, v1.2.3, ...) is pushed.
+# Builds an Arch Linux binary and a macOS app whenever a version tag (v0.0.1, v1.2.3, ...) is pushed.
 # The tag becomes the app version: Cargo.toml is rewritten before the build, so
 # `CARGO_PKG_VERSION` (shown in the sidebar) matches the tag.
 name: Release build
@@ -61,4 +61,40 @@ jobs:
           # Upload the tarball as-is (no zip wrapper); the artifact takes the file's name.
           archive: false
           path: dist/${{ steps.package.outputs.name }}.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    # Universal (Apple silicon + Intel) Aggrega.app, zipped. Unsigned apart from an
+    # ad-hoc signature, so Gatekeeper asks on first launch (see docs/BUILDING.md).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --target aarch64-apple-darwin,x86_64-apple-darwin
+          rustup default stable
+          # rsvg-convert renders the .icns sizes from assets/aggrega.svg.
+          brew install librsvg
+
+      - name: Set version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # BSD sed: only the [package] version line (the first `version =`).
+          sed -i '' "1,/^version = /s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+          grep -m1 '^version' Cargo.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build and bundle
+        # Not --locked, for the same reason as the Linux build.
+        run: packaging/macos/bundle.sh "${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          path: dist/aggrega-${{ steps.version.outputs.version }}-macos-universal.zip
           if-no-files-found: error

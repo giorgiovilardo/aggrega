@@ -1,6 +1,6 @@
 # Building and running Aggrega
 
-Arch Linux is the first supported target. Other platforms will follow in later iterations. The code is portable, so what's missing for them is mostly packaging.
+Arch Linux is the first supported target, and macOS builds are produced for every release (see [section 6](#6-macos)). Other platforms will follow in later iterations. The code is portable, so what's missing for them is mostly packaging.
 
 ## 1. Prerequisites (Arch Linux)
 
@@ -65,6 +65,7 @@ make lint       # rustfmt check + clippy (warnings are errors)
 make install    # installs binary, .desktop and icon into ~/.local (PREFIX=... to change)
 make uninstall
 make package    # builds an Arch package with makepkg
+make macos-app  # builds a universal Aggrega.app (macOS only, see section 6)
 ```
 
 ## 4. Tests and linting
@@ -114,22 +115,47 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar shows it under the logo. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file and the icon. Local builds show the version from `Cargo.toml`.
+The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar shows it under the logo. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file and the icon. The same run also builds the macOS app (see below). Local builds show the version from `Cargo.toml`.
 
-## 6. Data and reset
+## 6. macOS
 
-| What | Location |
-|---|---|
-| Database | `${XDG_DATA_HOME:-~/.local/share}/aggrega/aggrega.db` |
-| Thumbnails | `${XDG_CACHE_HOME:-~/.cache}/aggrega/thumbs/` |
+Every version tag also produces `aggrega-<version>-macos-universal.zip`, in the same run's **Artifacts** section. It holds `Aggrega.app`, a universal binary for Apple silicon and Intel Macs running macOS 11 or newer. Unzip it and drag `Aggrega.app` to `/Applications`.
 
-To try Aggrega with a throwaway profile without touching your real data:
+### First launch (Gatekeeper)
+
+The app isn't signed with an Apple Developer ID or notarized; it only carries an ad-hoc signature. The first time you open it, macOS says it can't verify the developer. Either:
+
+- open **System Settings → Privacy & Security**, scroll to the message about Aggrega and click **Open Anyway**, or
+- remove the quarantine flag in a terminal: `xattr -dr com.apple.quarantine /Applications/Aggrega.app`
+
+After that it opens normally.
+
+### Building it yourself
+
+```bash
+xcode-select --install                                        # Apple's compilers and linker
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+brew install librsvg                                          # rsvg-convert, for the icon
+make macos-app                                                # = packaging/macos/bundle.sh
+open dist/Aggrega.app
+```
+
+`packaging/macos/bundle.sh` builds both targets, merges them with `lipo`, writes `Info.plist` from `packaging/macos/Info.plist`, renders `aggrega.icns` from `assets/aggrega.svg`, ad-hoc signs the bundle and zips it with `ditto`. For day-to-day development, plain `cargo run` works on macOS too; no extra native libraries are needed.
+
+## 7. Data and reset
+
+| What | Linux | macOS |
+|---|---|---|
+| Database | `${XDG_DATA_HOME:-~/.local/share}/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` |
+| Thumbnails | `${XDG_CACHE_HOME:-~/.cache}/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` |
+
+To try Aggrega with a throwaway profile without touching your real data (Linux; on macOS, set `HOME` to a scratch directory instead):
 
 ```bash
 XDG_DATA_HOME=/tmp/agg/data XDG_CACHE_HOME=/tmp/agg/cache cargo run
 ```
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 **The window opens under XWayland instead of native Wayland (or the reverse).**
 Aggrega uses Wayland whenever `WAYLAND_DISPLAY` is set. To force X11, run:

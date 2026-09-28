@@ -57,14 +57,18 @@ cd packaging/arch && makepkg -si
 
 [docs/BUILDING.md](docs/BUILDING.md) has the full build, run, test and packaging guide, plus troubleshooting.
 
+## macOS
+
+Each release run builds a universal `Aggrega.app` (Apple silicon and Intel, macOS 11+), published as `aggrega-<version>-macos-universal.zip` in the run's artifacts. The app isn't notarized, so the first launch is blocked by Gatekeeper: click **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Aggrega.app`. See [docs/BUILDING.md](docs/BUILDING.md#6-macos) to build it yourself.
+
 ## Where is my data?
 
-| What | Path |
-|---|---|
-| Subscriptions, articles, read state, settings | `~/.local/share/aggrega/aggrega.db` |
-| Thumbnail cache (safe to delete) | `~/.cache/aggrega/thumbs/` |
+| What | Linux | macOS |
+|---|---|---|
+| Subscriptions, articles, read state, settings | `~/.local/share/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` |
+| Thumbnail cache (safe to delete) | `~/.cache/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` |
 
-Both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`. To start fresh, quit Aggrega and delete the two directories. Read articles older than 90 days are pruned automatically.
+On Linux, both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`. To start fresh, quit Aggrega and delete the two directories. Read articles older than 90 days are pruned automatically.
 
 ## Documentation
 
@@ -97,13 +101,13 @@ aggrega/
 ├── assets/
 │   ├── aggrega.svg     # app icon
 │   └── fonts/          # bundled OFL fonts (see FONTS.md)
-├── packaging/          # .desktop file + Arch PKGBUILD
+├── packaging/          # .desktop file, Arch PKGBUILD, macOS .app bundling
 └── docs/
 ```
 
 ## Roadmap ideas
 
-- More build targets: [Windows (#3)](https://github.com/moebiusmania/aggrega/issues/3), [macOS (#4)](https://github.com/moebiusmania/aggrega/issues/4), [AppImage (#5)](https://github.com/moebiusmania/aggrega/issues/5), [Flatpak (#6)](https://github.com/moebiusmania/aggrega/issues/6)
+- More build targets: [Windows (#3)](https://github.com/moebiusmania/aggrega/issues/3), macOS polish ([#4](https://github.com/moebiusmania/aggrega/issues/4): title bar, `Cmd` shortcuts, signing), [AppImage (#5)](https://github.com/moebiusmania/aggrega/issues/5), [Flatpak (#6)](https://github.com/moebiusmania/aggrega/issues/6)
 - [OPML import/export (#7)](https://github.com/moebiusmania/aggrega/issues/7)
 - [Folders/categories (#8)](https://github.com/moebiusmania/aggrega/issues/8), [search (#9)](https://github.com/moebiusmania/aggrega/issues/9)
 - [Periodic background refresh (#10)](https://github.com/moebiusmania/aggrega/issues/10)
