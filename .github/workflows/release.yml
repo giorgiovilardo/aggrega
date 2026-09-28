@@ -91,7 +91,17 @@ jobs:
 
       - name: Build and bundle
         # Not --locked, for the same reason as the Linux build.
-        run: packaging/macos/bundle.sh "${{ steps.version.outputs.version }}"
+        run: packaging/macos/bundle.sh
+
+      - name: Check version and name
+        run: |
+          plist=dist/Aggrega.app/Contents/Info.plist
+          for key in CFBundleShortVersionString CFBundleVersion; do
+            test "$(/usr/libexec/PlistBuddy -c "Print $key" "$plist")" = "${{ steps.version.outputs.version }}"
+          done
+          for key in CFBundleName CFBundleDisplayName; do
+            test "$(/usr/libexec/PlistBuddy -c "Print $key" "$plist")" = Aggrega
+          done
 
       - uses: actions/upload-artifact@v7
         with:

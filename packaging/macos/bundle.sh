@@ -1,15 +1,17 @@
 #!/bin/sh
 # Builds a universal (Apple silicon + Intel) Aggrega.app and zips it.
 #
-#   packaging/macos/bundle.sh [version]    # default: version from Cargo.toml
+#   packaging/macos/bundle.sh
 #
+# The version comes from Cargo.toml (which the release workflow rewrites from the
+# tag), so Info.plist always matches the version compiled into the binary.
 # Needs both Rust targets (rustup target add aarch64-apple-darwin x86_64-apple-darwin)
 # and rsvg-convert (brew install librsvg) to render the icon.
 # Output: dist/Aggrega.app and dist/aggrega-<version>-macos-universal.zip
 set -eu
 cd "$(dirname "$0")/../.."
 
-version="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)}"
+version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
 targets="aarch64-apple-darwin x86_64-apple-darwin"
 app="dist/Aggrega.app"
 
