@@ -535,6 +535,66 @@ pub fn download_image(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
+    macro_rules! fixtures {
+        ($($name:literal),* $(,)?) => {
+            &[$(($name, include_bytes!(concat!("../tests/fixtures/feeds/", $name)))),*]
+        };
+    }
+
+    /// Sample feeds from `tests/fixtures/feeds` (see the README there).
+    const FIXTURES: &[(&str, &[u8])] = fixtures![
+        "atom_mediarss_youtube_1.xml",
+        "atom_spec_1.xml",
+        "atom_xml_base.xml",
+        "jsonfeed_spec_1.json",
+        "rss_0.91_spec_1.xml",
+        "rss_0.92_spec_1.xml",
+        "rss_1.0_spec_1.xml",
+        "rss_2.0_bbc.xml",
+        "rss_2.0_spec_1.xml",
+        "rss_2.0_vimeo_media.xml",
+    ];
+
+    fn first_article(name: &str) -> NewArticle {
+        let (_, xml) = FIXTURES.iter().find(|(n, _)| *n == name).unwrap();
+        let f = parse("https://example.org/feed", xml).unwrap();
+        f.articles.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn parses_every_fixture() {
+        // Parses fine but yields no articles: its items have no link.
+        let empty = ["rss_0.92_spec_1.xml"];
+        for &(name, xml) in FIXTURES {
+            let f =
+                parse("https://example.org/feed", xml).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+            assert_eq!(f.articles.is_empty(), empty.contains(&name), "{name}");
+            for a in &f.articles {
+                assert!(!a.title.is_empty() && !a.link.is_empty(), "{name}: {a:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn picks_media_thumbnails_but_not_audio() {
+        assert_eq!(
+            first_article("atom_mediarss_youtube_1.xml")
+                .image_url
+                .as_deref(),
+            Some("https://i1.ytimg.com/vi/0A1ouV7iD8o/hqdefault.jpg")
+        );
+        // A podcast episode's audio enclosure is not a picture.
+        assert_eq!(first_article("rss_2.0_bbc.xml").image_url, None);
+    }
+
+    #[test]
+    fn links_fall_back_to_the_entry_id() {
+        // The entry has no <link>, only an http <id>.
+        let a = first_article("atom_xml_base.xml");
+        assert_eq!(a.link, "https://numi.st/post/2022/travel-uke");
+        assert_eq!(a.guid, a.link);
+    }
+
     #[test]
     fn reads_attributes() {
         let t = r#"<link rel="alternate" type='application/rss+xml' href=/feed.xml>"#;

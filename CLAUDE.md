@@ -31,6 +31,7 @@ CI (`.github/workflows/ci.yml`) runs `cargo test --locked` in an `archlinux` con
 ## Tests
 
 - Unit tests sit in `#[cfg(test)] mod tests` at the bottom of each module. Nothing touches the network or real user data; storage tests use a temp directory.
+- Sample feeds (RSS 0.91–2.0, Atom, JSON Feed) live in `tests/fixtures/feeds/` (copied from feed-rs) for `fetch`'s tests, compiled in via its `FIXTURES` list. `parses_every_fixture` runs them all through `parse`.
 - UI tests in `src/main.rs` drive the real `AppWindow` via `i-slint-backend-testing` (no display needed). `start(name)` builds a window over a temp DB, then tests use `mock_elapsed_time` to advance animations and `dispatch_event` for keys. Links point at `127.0.0.1:9` so page fetches fail fast.
 - `i-slint-backend-testing` is pinned to the exact `slint` version (`=1.18.1`). Bump both together.
 - CI installs `ttf-dejavu` because headless font lookup needs at least one system font.
