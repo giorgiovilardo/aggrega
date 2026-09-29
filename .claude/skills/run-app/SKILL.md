@@ -9,11 +9,11 @@ Aggrega is a GUI app (winit + OpenGL). It needs a display: check `$WAYLAND_DISPL
 
 ## Never touch the user's real data
 
-Always point the app at a temporary profile. The real database is `~/.local/share/aggrega/aggrega.db`.
+Always point the app at a temporary profile via `AGGREGA_HOME`, which holds the database (`aggrega.db`) and thumbnails (`thumbs/`) and overrides the real locations on every platform. The real database is `~/.local/share/aggrega/aggrega.db` on Linux and `~/Library/Application Support/aggrega/aggrega.db` on macOS.
 
 ```bash
 PROFILE=$(mktemp -d)   # prefer the session scratchpad directory if one exists
-XDG_DATA_HOME=$PROFILE/data XDG_CACHE_HOME=$PROFILE/cache cargo run
+AGGREGA_HOME=$PROFILE cargo run
 ```
 
 Use `cargo run --release` for screenshots or performance checks. The dev build is fine for everything else.
@@ -22,10 +22,10 @@ Use `cargo run --release` for screenshots or performance checks. The dev build i
 
 A fresh profile has no sources. To seed some without clicking through the UI:
 
-1. Launch once with the temp profile so it creates `$PROFILE/data/aggrega/aggrega.db`, then quit.
+1. Launch once with the temp profile so it creates `$PROFILE/aggrega.db`, then quit.
 2. Insert feeds. Refresh never updates `title`, so give each a real name:
    ```bash
-   sqlite3 "$PROFILE/data/aggrega/aggrega.db" "INSERT INTO feeds (url, title, added_at) VALUES
+   sqlite3 "$PROFILE/aggrega.db" "INSERT INTO feeds (url, title, added_at) VALUES
      ('https://www.theverge.com/rss/index.xml', 'The Verge', strftime('%s','now')),
      ('https://feeds.arstechnica.com/arstechnica/index', 'Ars Technica', strftime('%s','now'));"
    ```

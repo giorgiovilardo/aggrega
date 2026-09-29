@@ -149,10 +149,12 @@ open dist/Aggrega.app
 | Database | `${XDG_DATA_HOME:-~/.local/share}/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` |
 | Thumbnails | `${XDG_CACHE_HOME:-~/.cache}/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` |
 
-To try Aggrega with a throwaway profile without touching your real data (Linux; on macOS, set `HOME` to a scratch directory instead):
+On Linux, both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`.
+
+To try Aggrega with a throwaway profile without touching your real data, point `AGGREGA_HOME` at a scratch directory. It works on every platform and takes precedence over the paths above. The database and thumbnails then live together as `$AGGREGA_HOME/aggrega.db` and `$AGGREGA_HOME/thumbs/`, and deleting the directory resets the profile:
 
 ```bash
-XDG_DATA_HOME=/tmp/agg/data XDG_CACHE_HOME=/tmp/agg/cache cargo run
+AGGREGA_HOME=/tmp/agg cargo run
 ```
 
 ## 8. Troubleshooting
