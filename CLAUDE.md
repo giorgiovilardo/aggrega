@@ -13,7 +13,7 @@ cargo test                        # all tests, incl. headless UI tests
 cargo test reader::               # one module's tests
 cargo test layout_adapts_to_window_width   # a single test by name
 cargo fmt --check && cargo clippy -- -D warnings   # lint (= make lint)
-XDG_DATA_HOME=/tmp/agg/data XDG_CACHE_HOME=/tmp/agg/cache cargo run   # throwaway profile
+AGGREGA_HOME=/tmp/agg cargo run   # throwaway profile (db + thumbs in one dir, any OS)
 ```
 
 CI (`.github/workflows/ci.yml`) runs `cargo test --locked` in an `archlinux` container on every branch push. It does not run fmt/clippy, so run `make lint` yourself. Pushing a `vX.Y.Z` tag triggers `release.yml`, which rewrites the `Cargo.toml` version from the tag and uploads a tarball artifact.

@@ -9,7 +9,7 @@ mod thumbs;
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -52,13 +52,30 @@ struct Paths {
 }
 
 impl Paths {
+    /// `$AGGREGA_HOME` if set (database and thumbnails in one directory, for
+    /// throwaway profiles), otherwise the platform's data and cache directories.
     fn new() -> Result<Self> {
+        // Empty counts as unset, so `AGGREGA_HOME= aggrega` doesn't write into
+        // the working directory.
+        if let Some(home) = std::env::var_os("AGGREGA_HOME").filter(|v| !v.is_empty()) {
+            let home = std::path::absolute(home)?;
+            eprintln!("aggrega: using profile at {}", home.display());
+            return Self::in_dir(&home);
+        }
         let dirs =
             directories::ProjectDirs::from("", "", "aggrega").context("no home directory found")?;
-        let data = dirs.data_dir().to_path_buf();
-        let thumbs = dirs.cache_dir().join("thumbs");
-        std::fs::create_dir_all(&data)?;
-        std::fs::create_dir_all(&thumbs)?;
+        Self::create(dirs.data_dir(), dirs.cache_dir().join("thumbs"))
+    }
+
+    /// A self-contained profile: `aggrega.db` and `thumbs/` inside `dir`.
+    fn in_dir(dir: &Path) -> Result<Self> {
+        Self::create(dir, dir.join("thumbs"))
+    }
+
+    fn create(data: &Path, thumbs: PathBuf) -> Result<Self> {
+        for dir in [data, &thumbs] {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
         Ok(Self {
             db: data.join("aggrega.db"),
             thumbs,
@@ -898,8 +915,8 @@ mod tests {
         testing::init_no_event_loop();
         let dir = std::env::temp_dir().join(format!("aggrega-ui-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("thumbs")).unwrap();
-        let store = Store::open(&dir.join("t.db")).unwrap();
+        let paths = Paths::in_dir(&dir).unwrap();
+        let store = Store::open(&paths.db).unwrap();
         store
             .add_feed(
                 "https://blog.example/rss",
@@ -915,10 +932,6 @@ mod tests {
                 },
             )
             .unwrap();
-        let paths = Paths {
-            db: dir.join("t.db"),
-            thumbs: dir.join("thumbs"),
-        };
         let ui = AppWindow::new().unwrap();
         let app = setup(&ui, store, paths).unwrap();
         app.reload_all();
