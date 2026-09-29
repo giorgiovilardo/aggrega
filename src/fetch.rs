@@ -403,9 +403,12 @@ fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
         .unwrap_or(now)
         .min(now); // clamp bogus future dates
 
+    // Relative URLs resolve against the content's xml:base, else the link.
+    let base = Url::parse(&link)
+        .ok()
+        .map(|l| e.base.as_deref().and_then(|b| l.join(b).ok()).unwrap_or(l));
     let image_url = find_image(e, html, content_html).and_then(|src| {
-        Url::parse(&link)
-            .ok()
+        base.as_ref()
             .and_then(|base| base.join(&src).ok())
             .map(|u| u.to_string())
             .or(Some(src))
@@ -417,10 +420,7 @@ fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
     } else {
         html
     };
-    let body = reader::encode(&reader::blocks_from_html(
-        full_html,
-        Url::parse(&link).ok().as_ref(),
-    ));
+    let body = reader::encode(&reader::blocks_from_html(full_html, base.as_ref()));
 
     let guid = if e.id.is_empty() {
         link.clone()
@@ -593,6 +593,13 @@ mod tests {
         let a = first_article("atom_xml_base.xml");
         assert_eq!(a.link, "https://numi.st/post/2022/travel-uke");
         assert_eq!(a.guid, a.link);
+        // Its content's xml:base is a directory below that link.
+        let pic = "https://numi.st/post/2022/travel-uke/IMG_1232.jpeg";
+        assert_eq!(a.image_url.as_deref(), Some(pic));
+        assert_eq!(
+            reader::decode(&a.body),
+            vec![reader::Block::Image(pic.into())]
+        );
     }
 
     #[test]
