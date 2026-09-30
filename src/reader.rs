@@ -4,7 +4,7 @@
 
 use url::Url;
 
-use crate::fetch::attr;
+use crate::html::{Token, attr, element_end, tokenize};
 use crate::text;
 
 /// Below this many characters of text, the feed only carried a summary and
@@ -121,111 +121,6 @@ pub fn decode(s: &str) -> Vec<Block> {
             })
         })
         .collect()
-}
-
-// ---- HTML tokenizer ------------------------------------------------------
-
-#[derive(Debug)]
-enum Token<'a> {
-    Open { name: String, tag: &'a str },
-    Close(String),
-    Text(&'a str),
-}
-
-/// Elements whose contents are never text.
-const RAW: [&str; 7] = [
-    "script", "style", "noscript", "svg", "template", "math", "textarea",
-];
-/// Elements that never have a closing tag.
-const VOID: [&str; 14] = [
-    "img", "br", "hr", "input", "meta", "link", "source", "wbr", "area", "col", "embed", "param",
-    "track", "base",
-];
-
-/// A forgiving tag-soup tokenizer: good enough for pulling text out of
-/// real-world pages, never fails.
-fn tokenize(html: &str) -> Vec<Token<'_>> {
-    let lower = html.to_ascii_lowercase();
-    let bytes = html.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    let mut text_start = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'<' {
-            i += 1;
-            continue;
-        }
-        let rest = &lower[i..];
-        let next = rest.as_bytes().get(1).copied().unwrap_or(b' ');
-        let is_tag = next.is_ascii_alphabetic() || next == b'/' || next == b'!' || next == b'?';
-        if !is_tag {
-            i += 1;
-            continue;
-        }
-        if text_start < i {
-            out.push(Token::Text(&html[text_start..i]));
-        }
-        if rest.starts_with("<!--") {
-            i = rest.find("-->").map_or(bytes.len(), |p| i + p + 3);
-            text_start = i;
-            continue;
-        }
-        let end = rest.find('>').map_or(bytes.len(), |p| i + p + 1);
-        let tag = &html[i..end];
-        let closing = next == b'/';
-        let name: String = lower[i + 1 + closing as usize..end]
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric())
-            .collect();
-        i = end;
-        text_start = end;
-        if name.is_empty() {
-            continue; // <!doctype>, <?xml?>
-        }
-        if closing {
-            out.push(Token::Close(name));
-            continue;
-        }
-        if RAW.contains(&name.as_str()) {
-            // Skip to the matching close tag.
-            let close = format!("</{name}");
-            i = lower[i..].find(&close).map_or(bytes.len(), |p| {
-                let at = i + p;
-                lower[at..].find('>').map_or(bytes.len(), |q| at + q + 1)
-            });
-            text_start = i;
-            continue;
-        }
-        out.push(Token::Open { name, tag });
-    }
-    if text_start < bytes.len() {
-        out.push(Token::Text(&html[text_start..]));
-    }
-    out
-}
-
-/// Index just past the element opened at `tokens[start]` (or the end).
-fn element_end(tokens: &[Token], start: usize) -> usize {
-    let Token::Open { name, .. } = &tokens[start] else {
-        return start + 1;
-    };
-    if VOID.contains(&name.as_str()) {
-        return start + 1;
-    }
-    let mut depth = 0usize;
-    for (i, t) in tokens.iter().enumerate().skip(start) {
-        match t {
-            Token::Open { name: n, .. } if n == name => depth += 1,
-            Token::Close(n) if n == name => {
-                depth -= 1;
-                if depth == 0 {
-                    return i + 1;
-                }
-            }
-            _ => {}
-        }
-    }
-    tokens.len()
 }
 
 // ---- blocks ----------------------------------------------------------------
@@ -410,7 +305,9 @@ fn blocks_from_tokens(tokens: &[Token], base: Option<&Url>, skip_chrome: bool) -
         match &tokens[i] {
             Token::Text(t) => b.buf.push_str(t),
             Token::Open { name, tag } => {
-                if skip_chrome && is_chrome(name, tag) {
+                // `noscript` repeats what scripts would show, like a lazy
+                // image the reader already took from its `data-src`.
+                if name == "noscript" || (skip_chrome && is_chrome(name, tag)) {
                     i = element_end(tokens, i);
                     continue;
                 }
@@ -606,6 +503,21 @@ mod tests {
                 Block::Image("https://site.org/a.jpg".into()),
                 Block::Image("https://site.org/posts/b.png".into()),
                 Block::Image("https://site.org/a.jpg".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_noscript_copies() {
+        let base = Url::parse("https://site.org/").unwrap();
+        let html = r#"<p>Hi</p><img src="data:image/gif;base64,xx" data-src="/a.jpg">
+            <noscript><img src="/a.jpg"><p>Enable JavaScript</p></noscript><p>Bye</p>"#;
+        assert_eq!(
+            blocks_from_html(html, Some(&base)),
+            vec![
+                para("Hi"),
+                Block::Image("https://site.org/a.jpg".into()),
+                para("Bye")
             ]
         );
     }

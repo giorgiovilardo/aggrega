@@ -6,7 +6,8 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::fetch::{FeedJob, FetchResult, Fetched};
+use crate::feed::{FeedJob, FetchResult, Fetched};
+use crate::fetch::is_unreachable;
 
 const SCHEMA_VERSION: i32 = 2;
 
@@ -249,7 +250,7 @@ impl Store {
                     )?;
                 }
                 // Connectivity problems aren't the source's fault: keep its state.
-                Err(e) if crate::fetch::is_unreachable(&e) => summary.unreachable += 1,
+                Err(e) if is_unreachable(&e) => summary.unreachable += 1,
                 Err(e) => {
                     summary.failed += 1;
                     tx.execute(
@@ -373,7 +374,7 @@ fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fetch::NewArticle;
+    use crate::feed::NewArticle;
 
     fn sample(n: usize) -> Fetched {
         Fetched {

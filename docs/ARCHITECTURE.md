@@ -4,7 +4,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 
 ```
                 ┌──────────────────────────── UI thread ─────────────────────────────┐
-  user input ──▶│ Slint UI (ui/*.slint)  ──callbacks──▶  App (src/main.rs)            │
+  user input ──▶│ Slint UI (ui/*.slint)  ──callbacks──▶  App (src/app.rs)             │
                 │        ▲                                 │  owns Store (SQLite conn) │
                 │        └──── VecModel<ArticleItem/FeedItem> ◀┘  + models, caches     │
                 └──────────────────────────────▲────────────────────────────────────┘
@@ -22,12 +22,18 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 
 | File | Responsibility |
 |---|---|
-| `src/main.rs` | Creates the window, wires Slint callbacks, owns `App` (models, thumbnail cache, refresh state), and schedules background work |
-| `src/fetch.rs` | HTTP via `ureq` (blocking, rustls, gzip). Parses feeds with `feed-rs`, discovers feeds in HTML, and extracts article images. Contains `par_for_each`, a tiny scoped thread pool |
+| `src/main.rs` | Creates the window, wires every Slint callback to an `App` method, and runs the event loop |
+| `src/app.rs` | `App`, the UI-thread state (models, thumbnail cache, refresh and reader state), every action the UI triggers, and the background work those actions start. Also holds the headless UI tests |
+| `src/fetch.rs` | HTTP only, via `ureq` (blocking, rustls, gzip): conditional feed fetches, subscribing (with feed discovery), article pages and images |
+| `src/feed.rs` | Feeds as plain data (`FeedJob`, `Fetched`, `NewArticle`), plus everything done offline with a download: parsing with `feed-rs`, picking each entry's thumbnail, and finding feed links in an HTML page |
+| `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
+| `src/pool.rs` | `par_map` / `par_for_each`, a tiny scoped thread pool for short blocking jobs |
 | `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes |
 | `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns a `SharedPixelBuffer`. Also loads reader pictures, shrunk to fit the column (not cached) |
-| `src/reader.rs` | Reader view content: a forgiving HTML tokenizer, HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
-| `src/text.rs` | HTML to plain text, truncation, relative times ("5m ago"), avatar letter and colour |
+| `src/reader.rs` | Reader view content: HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
+| `src/text.rs` | Whitespace collapsing, truncation, relative times ("5m ago"), avatar letter and colour |
+
+Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` build on them, `fetch` adds HTTP on top of `feed`, and `app` uses everything. `db` needs only `feed`'s data types, plus `fetch::is_unreachable` to tell an offline refresh from a broken source.
 | `ui/theme.slint` | `Theme` global with every colour token, switched by `Theme.dark`, plus the `Icons` global |
 | `ui/app.slint` | `AppWindow`: responsive layout, header, list, toast, keyboard shortcuts, and the public API used from Rust |
 | `ui/reader.slint` | `ReaderView`: toolbar, headline, lead photo and one `BlockView` per content block, in a scrollable column |

@@ -5,7 +5,7 @@ description: Launch Aggrega locally against a throwaway profile, optionally seed
 
 # Run Aggrega
 
-Aggrega is a GUI app (winit + OpenGL). It needs a display: check `$WAYLAND_DISPLAY` or `$DISPLAY`. If neither is set, say so and don't try to launch it. For layout or behaviour checks without a display, use the headless UI tests in `src/main.rs` instead (see the `precheck` skill).
+Aggrega is a GUI app (winit + OpenGL). It needs a display: check `$WAYLAND_DISPLAY` or `$DISPLAY`. If neither is set, say so and don't try to launch it. For layout or behaviour checks without a display, use the headless UI tests in `src/app.rs` instead (see the `precheck` skill).
 
 ## Never touch the user's real data
 

@@ -1,15 +1,14 @@
-//! Networking: fetching and parsing feeds, discovering feeds from web pages,
-//! and running many fetches in parallel on a small pool of OS threads.
+//! HTTP: downloading feeds (conditionally), subscribing to whatever address
+//! the user typed, and fetching article pages and images. Everything that
+//! can be done offline with the downloaded bytes lives in `feed`.
 
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use feed_rs::model::Entry;
 use url::Url;
 
-use crate::{reader, text};
+use crate::feed::{self, FeedJob, FetchResult, Fetched};
+use crate::pool;
 
 const USER_AGENT: &str = concat!(
     "Aggrega/",
@@ -19,42 +18,6 @@ const USER_AGENT: &str = concat!(
 const MAX_FEED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
-const SNIPPET_CHARS: usize = 280;
-
-/// An article parsed from a feed, ready to be stored.
-#[derive(Debug, Clone)]
-pub struct NewArticle {
-    pub guid: String,
-    pub title: String,
-    pub link: String,
-    pub snippet: String,
-    pub image_url: Option<String>,
-    pub published: i64,
-    /// Reader view blocks from the feed's own content (`reader::encode`d).
-    pub body: String,
-}
-
-/// A successfully downloaded and parsed feed.
-#[derive(Debug)]
-pub struct Fetched {
-    pub title: String,
-    pub site_url: Option<String>,
-    pub etag: Option<String>,
-    pub last_modified: Option<String>,
-    pub articles: Vec<NewArticle>,
-}
-
-/// What we need to know to (conditionally) refresh one subscription.
-#[derive(Debug, Clone)]
-pub struct FeedJob {
-    pub id: i64,
-    pub url: String,
-    pub etag: Option<String>,
-    pub last_modified: Option<String>,
-}
-
-/// `Ok(None)` means the server answered "304 Not Modified".
-pub type FetchResult = Result<Option<Fetched>>;
 
 /// The server couldn't be reached at all (no network, DNS failure, timeout…).
 /// Unlike an HTTP error this says nothing about the source itself, so it's
@@ -169,7 +132,7 @@ pub fn fetch_feed(agent: &ureq::Agent, job: &FeedJob) -> FetchResult {
     match resp.status {
         304 => Ok(None),
         200..=299 => {
-            let mut fetched = parse(&job.url, &resp.body)?;
+            let mut fetched = feed::parse(&job.url, &resp.body)?;
             fetched.etag = resp.etag;
             fetched.last_modified = resp.last_modified;
             Ok(Some(fetched))
@@ -178,29 +141,9 @@ pub fn fetch_feed(agent: &ureq::Agent, job: &FeedJob) -> FetchResult {
     }
 }
 
-/// Fetches all jobs using a bounded pool of threads. Order of results is unspecified.
+/// Fetches all jobs on a bounded pool of threads.
 pub fn fetch_all(agent: &ureq::Agent, jobs: &[FeedJob]) -> Vec<(i64, FetchResult)> {
-    let results = Mutex::new(Vec::with_capacity(jobs.len()));
-    par_for_each(jobs, 8, |job| {
-        let r = fetch_feed(agent, job);
-        results.lock().unwrap().push((job.id, r));
-    });
-    results.into_inner().unwrap()
-}
-
-/// Runs `f` over `items` on up to `workers` scoped threads.
-pub fn par_for_each<T: Sync>(items: &[T], workers: usize, f: impl Fn(&T) + Sync) {
-    let next = AtomicUsize::new(0);
-    let n = workers.min(items.len());
-    std::thread::scope(|s| {
-        for _ in 0..n {
-            s.spawn(|| {
-                while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    f(item);
-                }
-            });
-        }
-    });
+    pool::par_map(jobs, 8, |job| (job.id, fetch_feed(agent, job)))
 }
 
 /// Turns whatever the user typed into a feed URL, discovering the feed
@@ -211,7 +154,7 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> 
     if !(200..300).contains(&resp.status) {
         bail!("server answered HTTP {}", resp.status);
     }
-    if let Ok(mut f) = parse(&url, &resp.body) {
+    if let Ok(mut f) = feed::parse(&url, &resp.body) {
         f.etag = resp.etag;
         f.last_modified = resp.last_modified;
         return Ok((url, f));
@@ -220,7 +163,7 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> 
     // Not a feed: look for <link rel="alternate"> tags, then common paths.
     let html = String::from_utf8_lossy(&resp.body);
     let base = Url::parse(&url)?;
-    let mut candidates = discover_links(&html, &base);
+    let mut candidates = feed::discover_links(&html, &base);
     for p in [
         "/feed",
         "/rss",
@@ -245,7 +188,7 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> 
         if !(200..300).contains(&r.status) {
             continue;
         }
-        if let Ok(mut f) = parse(&c, &r.body) {
+        if let Ok(mut f) = feed::parse(&c, &r.body) {
             f.etag = r.etag;
             f.last_modified = r.last_modified;
             return Ok((c, f));
@@ -269,236 +212,6 @@ fn normalize_url(input: &str) -> Result<String> {
         bail!("only http and https addresses are supported");
     }
     Ok(u.to_string())
-}
-
-/// Finds feed URLs advertised by an HTML page.
-fn discover_links(html: &str, base: &Url) -> Vec<String> {
-    let lower = html.to_ascii_lowercase();
-    let mut out = Vec::new();
-    let mut pos = 0;
-    while let Some(start) = lower[pos..].find("<link") {
-        let start = pos + start;
-        let end = lower[start..]
-            .find('>')
-            .map(|e| start + e)
-            .unwrap_or(lower.len());
-        let tag = &html[start..end];
-        pos = end;
-        let rel = attr(tag, "rel").unwrap_or_default().to_ascii_lowercase();
-        let ty = attr(tag, "type").unwrap_or_default().to_ascii_lowercase();
-        let is_feed = ty.contains("rss") || ty.contains("atom") || ty.contains("feed+json");
-        if rel.contains("alternate")
-            && is_feed
-            && let Some(href) = attr(tag, "href")
-            && let Ok(u) = base.join(&html_escape::decode_html_entities(&href))
-        {
-            out.push(u.to_string());
-        }
-    }
-    out
-}
-
-/// Reads an attribute value from a single HTML tag (quoted or unquoted).
-pub(crate) fn attr(tag: &str, name: &str) -> Option<String> {
-    let lower = tag.to_ascii_lowercase();
-    let mut from = 0;
-    while let Some(p) = lower[from..].find(name) {
-        let p = from + p;
-        from = p + name.len();
-        let before_ok = p > 0 && lower.as_bytes()[p - 1].is_ascii_whitespace();
-        let rest = lower[from..].trim_start();
-        if !before_ok || !rest.starts_with('=') {
-            continue;
-        }
-        let offset = tag.len() - rest.len() + 1;
-        let value = tag[offset..].trim_start();
-        return Some(match value.chars().next()? {
-            q @ ('"' | '\'') => value[1..].split(q).next()?.to_string(),
-            _ => value
-                .split(|c: char| c.is_whitespace() || c == '>')
-                .next()?
-                .to_string(),
-        });
-    }
-    None
-}
-
-fn parse(url: &str, body: &[u8]) -> Result<Fetched> {
-    let feed = feed_rs::parser::Builder::new()
-        .base_uri(Some(url))
-        .build()
-        .parse(body)
-        .context("not a valid RSS/Atom feed")?;
-
-    let now = chrono::Utc::now().timestamp();
-    let title = feed
-        .title
-        .map(|t| text::html_to_text(&t.content))
-        .filter(|t| !t.is_empty())
-        .or_else(|| {
-            Url::parse(url)
-                .ok()
-                .and_then(|u| u.host_str().map(str::to_owned))
-        })
-        .unwrap_or_else(|| url.to_string());
-    let site_url = feed
-        .links
-        .iter()
-        .find(|l| l.rel.as_deref().is_none_or(|r| r == "alternate"))
-        .map(|l| l.href.clone());
-
-    let articles = feed
-        .entries
-        .iter()
-        .filter_map(|e| convert_entry(e, now))
-        .collect();
-    Ok(Fetched {
-        title,
-        site_url,
-        etag: None,
-        last_modified: None,
-        articles,
-    })
-}
-
-fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
-    let link = e
-        .links
-        .iter()
-        .find(|l| l.rel.as_deref().is_none_or(|r| r == "alternate"))
-        .or_else(|| e.links.first())
-        .map(|l| l.href.clone())
-        .or_else(|| e.id.starts_with("http").then(|| e.id.clone()))?;
-
-    let html = e
-        .summary
-        .as_ref()
-        .map(|s| s.content.as_str())
-        .or_else(|| e.content.as_ref().and_then(|c| c.body.as_deref()))
-        .unwrap_or("");
-    let content_html = e
-        .content
-        .as_ref()
-        .and_then(|c| c.body.as_deref())
-        .unwrap_or("");
-
-    let mut title = e
-        .title
-        .as_ref()
-        .map(|t| text::html_to_text(&t.content))
-        .unwrap_or_default();
-    let snippet = text::truncate(&text::html_to_text(html), SNIPPET_CHARS);
-    if title.is_empty() {
-        title = if snippet.is_empty() {
-            "(untitled)".into()
-        } else {
-            text::truncate(&snippet, 90)
-        };
-    }
-
-    let published = e
-        .published
-        .or(e.updated)
-        .map(|d| d.timestamp())
-        .unwrap_or(now)
-        .min(now); // clamp bogus future dates
-
-    // Relative URLs resolve against the content's xml:base, else the link.
-    let base = Url::parse(&link)
-        .ok()
-        .map(|l| e.base.as_deref().and_then(|b| l.join(b).ok()).unwrap_or(l));
-    let image_url = find_image(e, html, content_html).and_then(|src| {
-        base.as_ref()
-            .and_then(|base| base.join(&src).ok())
-            .map(|u| u.to_string())
-            .or(Some(src))
-    });
-
-    // The reader wants the fullest version the feed offers.
-    let full_html = if content_html.len() > html.len() {
-        content_html
-    } else {
-        html
-    };
-    let body = reader::encode(&reader::blocks_from_html(full_html, base.as_ref()));
-
-    let guid = if e.id.is_empty() {
-        link.clone()
-    } else {
-        e.id.clone()
-    };
-    Some(NewArticle {
-        guid,
-        title,
-        link,
-        snippet,
-        image_url,
-        published,
-        body,
-    })
-}
-
-fn find_image(e: &Entry, summary_html: &str, content_html: &str) -> Option<String> {
-    for m in &e.media {
-        if let Some(t) = m.thumbnails.first() {
-            return Some(t.image.uri.clone());
-        }
-        for c in &m.content {
-            let is_image = c
-                .content_type
-                .as_ref()
-                .is_some_and(|t| t.to_string().starts_with("image/"))
-                || c.url.as_ref().is_some_and(|u| looks_like_image(u.as_str()));
-            if is_image && let Some(u) = &c.url {
-                return Some(u.to_string());
-            }
-        }
-    }
-    for l in &e.links {
-        if l.rel.as_deref() == Some("enclosure")
-            && (l
-                .media_type
-                .as_deref()
-                .is_some_and(|t| t.starts_with("image/"))
-                || looks_like_image(&l.href))
-        {
-            return Some(l.href.clone());
-        }
-    }
-    first_img_src(summary_html).or_else(|| first_img_src(content_html))
-}
-
-fn looks_like_image(u: &str) -> bool {
-    let path = u
-        .split(['?', '#'])
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    [".jpg", ".jpeg", ".png", ".webp", ".gif"]
-        .iter()
-        .any(|ext| path.ends_with(ext))
-}
-
-fn first_img_src(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let mut pos = 0;
-    while let Some(p) = lower[pos..].find("<img") {
-        let start = pos + p;
-        let end = lower[start..]
-            .find('>')
-            .map(|e| start + e)
-            .unwrap_or(lower.len());
-        pos = end;
-        let tag = &html[start..end];
-        // Skip tracking pixels.
-        if attr(tag, "width").is_some_and(|w| w.trim() == "1") {
-            continue;
-        }
-        if let Some(src) = attr(tag, "src").filter(|s| !s.starts_with("data:")) {
-            return Some(html_escape::decode_html_entities(&src).into_owned());
-        }
-    }
-    None
 }
 
 /// Downloads an article's web page for the reader view.
@@ -535,92 +248,6 @@ pub fn download_image(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    macro_rules! fixtures {
-        ($($name:literal),* $(,)?) => {
-            &[$(($name, include_bytes!(concat!("../tests/fixtures/feeds/", $name)))),*]
-        };
-    }
-
-    /// Sample feeds from `tests/fixtures/feeds` (see the README there).
-    const FIXTURES: &[(&str, &[u8])] = fixtures![
-        "atom_mediarss_youtube_1.xml",
-        "atom_spec_1.xml",
-        "atom_xml_base.xml",
-        "jsonfeed_spec_1.json",
-        "rss_0.91_spec_1.xml",
-        "rss_0.92_spec_1.xml",
-        "rss_1.0_spec_1.xml",
-        "rss_2.0_bbc.xml",
-        "rss_2.0_spec_1.xml",
-        "rss_2.0_vimeo_media.xml",
-    ];
-
-    fn first_article(name: &str) -> NewArticle {
-        let (_, xml) = FIXTURES.iter().find(|(n, _)| *n == name).unwrap();
-        let f = parse("https://example.org/feed", xml).unwrap();
-        f.articles.into_iter().next().unwrap()
-    }
-
-    #[test]
-    fn parses_every_fixture() {
-        // Parses fine but yields no articles: its items have no link.
-        let empty = ["rss_0.92_spec_1.xml"];
-        for &(name, xml) in FIXTURES {
-            let f =
-                parse("https://example.org/feed", xml).unwrap_or_else(|e| panic!("{name}: {e:#}"));
-            assert_eq!(f.articles.is_empty(), empty.contains(&name), "{name}");
-            for a in &f.articles {
-                assert!(!a.title.is_empty() && !a.link.is_empty(), "{name}: {a:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn picks_media_thumbnails_but_not_audio() {
-        assert_eq!(
-            first_article("atom_mediarss_youtube_1.xml")
-                .image_url
-                .as_deref(),
-            Some("https://i1.ytimg.com/vi/0A1ouV7iD8o/hqdefault.jpg")
-        );
-        // A podcast episode's audio enclosure is not a picture.
-        assert_eq!(first_article("rss_2.0_bbc.xml").image_url, None);
-    }
-
-    #[test]
-    fn links_fall_back_to_the_entry_id() {
-        // The entry has no <link>, only an http <id>.
-        let a = first_article("atom_xml_base.xml");
-        assert_eq!(a.link, "https://numi.st/post/2022/travel-uke");
-        assert_eq!(a.guid, a.link);
-        // Its content's xml:base is a directory below that link.
-        let pic = "https://numi.st/post/2022/travel-uke/IMG_1232.jpeg";
-        assert_eq!(a.image_url.as_deref(), Some(pic));
-        assert_eq!(
-            reader::decode(&a.body),
-            vec![reader::Block::Image(pic.into())]
-        );
-    }
-
-    #[test]
-    fn reads_attributes() {
-        let t = r#"<link rel="alternate" type='application/rss+xml' href=/feed.xml>"#;
-        assert_eq!(attr(t, "rel").as_deref(), Some("alternate"));
-        assert_eq!(attr(t, "type").as_deref(), Some("application/rss+xml"));
-        assert_eq!(attr(t, "href").as_deref(), Some("/feed.xml"));
-    }
-
-    #[test]
-    fn discovers_feed_links() {
-        let html = r#"<html><head><link rel="stylesheet" href="a.css">
-            <link rel="alternate" type="application/atom+xml" href="/atom.xml"></head></html>"#;
-        let base = Url::parse("https://example.com/blog/").unwrap();
-        assert_eq!(
-            discover_links(html, &base),
-            vec!["https://example.com/atom.xml".to_string()]
-        );
-    }
-
     #[test]
     fn refused_connection_counts_as_unreachable() {
         // Port 9 on localhost is closed: the request fails before any HTTP exchange.
@@ -641,50 +268,5 @@ mod tests {
             "https://example.com/feed"
         );
         assert!(normalize_url("ftp://x.org").is_err());
-    }
-
-    #[test]
-    fn parses_rss() {
-        let xml = br#"<?xml version="1.0"?><rss version="2.0"><channel><title>Demo</title>
-            <link>https://demo.org</link>
-            <item><title>Hello &amp; welcome</title><link>https://demo.org/1</link><guid>1</guid>
-            <description>&lt;p&gt;Body &lt;img src="/pic.jpg"&gt;&lt;/p&gt;</description>
-            <pubDate>Tue, 01 Sep 2026 10:00:00 GMT</pubDate></item>
-            </channel></rss>"#;
-        let f = parse("https://demo.org/rss", xml).unwrap();
-        assert_eq!(f.title, "Demo");
-        assert_eq!(f.articles.len(), 1);
-        let a = &f.articles[0];
-        assert_eq!(a.title, "Hello & welcome");
-        assert_eq!(a.snippet, "Body");
-        assert_eq!(a.image_url.as_deref(), Some("https://demo.org/pic.jpg"));
-        assert_eq!(
-            reader::decode(&a.body),
-            vec![
-                reader::Block::Paragraph("Body".into()),
-                reader::Block::Image("https://demo.org/pic.jpg".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn reader_body_prefers_full_content() {
-        let xml = br#"<?xml version="1.0"?>
-            <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>
-            <title>Demo</title><link>https://demo.org</link>
-            <item><title>Long read</title><link>https://demo.org/2</link><guid>2</guid>
-            <description>Short teaser</description>
-            <content:encoded><![CDATA[<h2>Intro</h2><p>The whole story.</p>]]></content:encoded>
-            </item></channel></rss>"#;
-        let f = parse("https://demo.org/rss", xml).unwrap();
-        let a = &f.articles[0];
-        assert_eq!(a.snippet, "Short teaser");
-        assert_eq!(
-            reader::decode(&a.body),
-            vec![
-                reader::Block::Heading("Intro".into()),
-                reader::Block::Paragraph("The whole story.".into()),
-            ]
-        );
     }
 }
