@@ -1,67 +1,6 @@
-//! Small text helpers: HTML → plain text, relative dates, avatar letters/colours.
+//! Small text helpers: whitespace, truncation, relative dates, avatar letters/colours.
 
 use chrono::{DateTime, Datelike, Local};
-
-/// Strips tags, decodes entities and collapses whitespace.
-pub fn html_to_text(html: &str) -> String {
-    let mut out = String::with_capacity(html.len().min(4096));
-    let mut in_tag = false;
-    let mut skip_until: Option<&str> = None;
-    let lower = html.to_ascii_lowercase();
-    let mut i = 0;
-    let bytes = html.as_bytes();
-    while i < bytes.len() {
-        if let Some(end) = skip_until {
-            match lower[i..].find(end) {
-                Some(p) => {
-                    i += p + end.len();
-                    skip_until = None;
-                    continue;
-                }
-                None => break,
-            }
-        }
-        let c = bytes[i];
-        if in_tag {
-            if c == b'>' {
-                in_tag = false;
-                out.push(' ');
-            }
-            i += 1;
-            continue;
-        }
-        if c == b'<' {
-            let rest = &lower[i..];
-            if rest.starts_with("<script") {
-                skip_until = Some("</script>");
-            } else if rest.starts_with("<style") {
-                skip_until = Some("</style>");
-            } else if rest.starts_with("<!--") {
-                skip_until = Some("-->");
-            } else {
-                in_tag = true;
-            }
-            i += 1;
-            continue;
-        }
-        // Copy the full UTF-8 sequence starting at `i`.
-        let ch_len = utf8_len(c);
-        let end = (i + ch_len).min(bytes.len());
-        out.push_str(&html[i..end]);
-        i = end;
-    }
-    let decoded = html_escape::decode_html_entities(&out);
-    collapse_ws(&decoded)
-}
-
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0x00..=0x7F => 1,
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        _ => 4,
-    }
-}
 
 pub fn collapse_ws(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -150,17 +89,6 @@ pub fn tint(seed: &str) -> slint::Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn strips_html() {
-        let s = html_to_text("<p>Hello&nbsp;<b>world</b> &amp; <script>x()</script>friends</p>");
-        assert_eq!(s, "Hello world & friends");
-    }
-
-    #[test]
-    fn keeps_unicode() {
-        assert_eq!(html_to_text("<i>caffè</i> — ok"), "caffè — ok");
-    }
 
     #[test]
     fn truncates_on_word() {

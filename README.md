@@ -83,12 +83,16 @@ aggrega/
 ├── Cargo.toml          # dependencies + release profile (LTO, strip)
 ├── build.rs            # compiles the .slint UI into Rust at build time
 ├── src/
-│   ├── main.rs         # app state, UI wiring, background jobs
-│   ├── fetch.rs        # HTTP, feed parsing, feed discovery, parallel fetch
+│   ├── main.rs         # window setup, UI callback wiring
+│   ├── app.rs          # app state, UI actions, background jobs
+│   ├── fetch.rs        # HTTP: feeds, subscribing, pages, images
+│   ├── feed.rs         # feed parsing, thumbnails, feed discovery
+│   ├── html.rs         # HTML tokenizer, HTML→text
+│   ├── pool.rs         # scoped thread pool
 │   ├── reader.rs       # reader view: HTML → text blocks, article extraction
 │   ├── db.rs           # SQLite storage
 │   ├── thumbs.rs       # thumbnail download/resize/disk cache, reader pictures
-│   └── text.rs         # HTML→text, relative dates, avatar colours
+│   └── text.rs         # truncation, relative dates, avatar colours
 ├── ui/
 │   ├── app.slint       # main window
 │   ├── theme.slint     # fonts, design tokens (light/dark), icon set
