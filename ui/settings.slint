@@ -1,0 +1,381 @@
+import { AboutSlint, ScrollView } from "std-widgets.slint";
+import { Theme, Icons, Fonts } from "theme.slint";
+import { IconButton } from "widgets.slint";
+import { DialogHeader, Modal } from "dialogs.slint";
+
+// One entry in the settings rail, styled like a sidebar row.
+component SettingsTab inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> selected;
+    callback clicked();
+
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    height: 40px;
+    background: root.selected || touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: 160ms; }
+
+    // Red selection rule that grows in from the middle.
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: root.selected ? parent.height : 0px;
+        y: (parent.height - self.height) / 2;
+        background: Theme.accent;
+        animate height { duration: 280ms; easing: cubic-bezier(0.3, 1.2, 0.5, 1); }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 12px;
+        spacing: 11px;
+        Image {
+            source: root.icon;
+            width: 17px;
+            height: 17px;
+            y: (parent.height - self.height) / 2;
+            colorize: root.selected ? Theme.accent : Theme.text-muted;
+            animate colorize { duration: 160ms; }
+        }
+        Text {
+            text: root.label;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            overflow: elide;
+            font-family: root.selected ? Fonts.sans-bold : Fonts.sans;
+            font-weight: root.selected ? 700 : 500;
+            font-size: 13.5px;
+            color: root.selected || touch.has-hover ? Theme.ink : Theme.text-muted;
+            animate color { duration: 160ms; }
+        }
+    }
+}
+
+// A label / value line in a hairline-ruled table.
+component FactRow inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+
+    HorizontalLayout {
+        padding-top: 11px;
+        padding-bottom: 11px;
+        spacing: 16px;
+        Text {
+            width: 120px;
+            text: root.label.to-uppercase();
+            vertical-alignment: center;
+            font-family: Fonts.sans-bold;
+            font-weight: 700;
+            font-size: 10.5px;
+            letter-spacing: 1.4px;
+            color: Theme.text-faint;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.value;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            font-family: Fonts.serif;
+            font-size: 15px;
+            color: Theme.ink;
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: Theme.rule;
+    }
+}
+
+component CreditNote inherits Text {
+    wrap: word-wrap;
+    font-family: Fonts.serif;
+    font-size: 13.5px;
+    color: Theme.text-body;
+}
+
+component ExportPane inherits VerticalLayout {
+    padding: 40px;
+    padding-top: 38px;
+    spacing: 18px;
+    alignment: start;
+
+    DialogHeader {
+        kicker: "Export";
+        title: "Take your edition with you";
+        subtitle: "Save your sources to a file, to keep as a backup or to bring to another feed reader.";
+        subtitle-color: Theme.text-body;
+    }
+
+    Rectangle {
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.rule;
+        background: Theme.bg;
+
+        HorizontalLayout {
+            padding: 18px;
+            spacing: 14px;
+            VerticalLayout {
+                alignment: start;
+                Image {
+                    source: Icons.rss;
+                    width: 20px;
+                    height: 20px;
+                    colorize: Theme.accent;
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text {
+                    text: "Sources as OPML";
+                    font-family: Fonts.sans-bold;
+                    font-weight: 700;
+                    font-size: 14px;
+                    color: Theme.ink;
+                }
+                Text {
+                    text: "The standard subscription list that every feed reader can import.";
+                    wrap: word-wrap;
+                    font-family: Fonts.serif;
+                    font-size: 14.5px;
+                    color: Theme.text-body;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "COMING SOON";
+                    font-family: Fonts.sans-bold;
+                    font-weight: 700;
+                    font-size: 10px;
+                    letter-spacing: 1.4px;
+                    color: Theme.text-faint;
+                }
+            }
+        }
+    }
+}
+
+component AboutPane inherits VerticalLayout {
+    in property <string> version;
+
+    padding: 40px;
+    padding-top: 38px;
+    spacing: 8px;
+    alignment: start;
+
+    Text {
+        text: "ABOUT";
+        font-family: Fonts.sans-black;
+        font-weight: 800;
+        font-size: 10.5px;
+        letter-spacing: 2px;
+        color: Theme.accent;
+    }
+    Text {
+        text: "Aggrega";
+        font-family: Fonts.serif-black;
+        font-weight: 900;
+        font-size: 52px;
+        letter-spacing: -1.5px;
+        color: Theme.accent;
+    }
+    HorizontalLayout {
+        alignment: start;
+        Rectangle {
+            width: 240px;
+            height: 2px;
+            background: Theme.ink;
+        }
+    }
+    Text {
+        text: "YOUR FEEDS · ONE EDITION";
+        font-family: Fonts.sans-bold;
+        font-weight: 700;
+        font-size: 10.5px;
+        letter-spacing: 1.6px;
+        color: Theme.text-muted;
+    }
+    Rectangle {
+        height: 4px;
+    }
+    Text {
+        text: "A fast, lightweight feed reader for RSS, Atom and JSON Feed. Everything stays on this computer: no account, no cloud, no tracking. Aggrega only goes online to fetch your sources, their pictures and the articles you open.";
+        wrap: word-wrap;
+        font-family: Fonts.serif;
+        font-size: 15.5px;
+        color: Theme.text-body;
+    }
+    VerticalLayout {
+        padding-top: 18px;
+        Rectangle {
+            height: 1px;
+            background: Theme.rule;
+        }
+        if root.version != "": FactRow {
+            label: "Version";
+            value: root.version;
+        }
+        FactRow {
+            label: "License";
+            value: "MIT";
+        }
+        FactRow {
+            label: "Built with";
+            value: "Rust, Slint and SQLite";
+        }
+    }
+
+    // Notices for the bundled third-party software and fonts.
+    VerticalLayout {
+        padding-top: 26px;
+        spacing: 10px;
+        Text {
+            text: "CREDITS";
+            font-family: Fonts.sans-bold;
+            font-weight: 700;
+            font-size: 10.5px;
+            letter-spacing: 1.4px;
+            color: Theme.text-faint;
+        }
+        CreditNote {
+            text: "The interface is built with Slint, © SixtyFPS GmbH, used under the Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0.";
+        }
+        CreditNote {
+            text: "Source Serif 4, © 2014–2021 Adobe Systems Incorporated, with Reserved Font Name “Source”, and Libre Franklin, © 2020 The Libre Franklin Project Authors, are used under the SIL Open Font License 1.1.";
+        }
+        CreditNote {
+            text: "Storage is powered by SQLite, which is in the public domain. Other open-source libraries are used under their own licenses, including MIT, Apache 2.0, BSD, ISC, Zlib, MPL 2.0 and Unicode.";
+        }
+        // The Slint Royalty-free License asks for the AboutSlint widget in
+        // the app's About screen.
+        HorizontalLayout {
+            padding-top: 8px;
+            alignment: center;
+            AboutSlint {
+                width: 160px;
+                height: self.min-height;
+            }
+        }
+    }
+}
+
+// Settings: a large modal with a vertical tab rail on the left and the
+// selected tab's content on the right.
+export component SettingsDialog inherits Rectangle {
+    in property <string> version;
+    callback closed();
+
+    out property <bool> shown: false;
+    in-out property <int> tab: 0;
+
+    public function open() {
+        self.shown = true;
+    }
+
+    public function close() {
+        if (self.shown) {
+            self.shown = false;
+            self.closed();
+        }
+    }
+
+    Modal {
+        shown: root.shown;
+        bare: true;
+        card-width: 880px;
+        card-height: 600px;
+        dismiss => { root.close(); }
+
+        HorizontalLayout {
+            // Tab rail.
+            Rectangle {
+                width: 220px;
+                background: Theme.sidebar;
+                animate background { duration: 300ms; }
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    background: Theme.rule;
+                }
+
+                VerticalLayout {
+                    padding-top: 34px;
+                    padding-bottom: 20px;
+                    spacing: 2px;
+                    alignment: start;
+
+                    VerticalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-bottom: 22px;
+                        spacing: 8px;
+                        Text {
+                            text: "Settings";
+                            font-family: Fonts.serif-black;
+                            font-weight: 900;
+                            font-size: 28px;
+                            letter-spacing: -0.4px;
+                            color: Theme.ink;
+                        }
+                        Rectangle {
+                            height: 2px;
+                            background: Theme.ink;
+                        }
+                    }
+
+                    SettingsTab {
+                        label: "Export";
+                        icon: Icons.download;
+                        selected: root.tab == 0;
+                        clicked => { root.tab = 0; }
+                    }
+                    SettingsTab {
+                        label: "About";
+                        icon: Icons.info;
+                        selected: root.tab == 1;
+                        clicked => { root.tab = 1; }
+                    }
+                }
+            }
+
+            // Content of the selected tab, scrolling when it outgrows the card.
+            Rectangle {
+                horizontal-stretch: 1;
+
+                ScrollView {
+                    content-width: self.visible-width;
+                    content-height: max(self.visible-height, root.tab == 0 ? export-pane.preferred-height : about-pane.preferred-height);
+
+                    export-pane := ExportPane {
+                        visible: root.tab == 0;
+                        width: parent.width;
+                    }
+                    about-pane := AboutPane {
+                        visible: root.tab == 1;
+                        width: parent.width;
+                        version: root.version;
+                    }
+                }
+
+                IconButton {
+                    x: parent.width - self.width - 14px;
+                    y: 16px;
+                    icon: Icons.x;
+                    label: "Close settings";
+                    clicked => { root.close(); }
+                }
+            }
+        }
+    }
+}

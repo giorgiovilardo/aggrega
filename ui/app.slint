@@ -6,6 +6,7 @@ import { Sidebar } from "sidebar.slint";
 import { ArticleCard } from "article-card.slint";
 import { AddSourceDialog, ConfirmRemoveDialog } from "dialogs.slint";
 import { ReaderView } from "reader.slint";
+import { SettingsDialog } from "settings.slint";
 
 export { Theme, ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo }
 
@@ -62,6 +63,7 @@ export component AppWindow inherits Window {
     out property <length> sidebar-width: self.compact ? 224px : 272px;
     out property <length> column-width: main.column;
     out property <length> reader-column-width: reader-view.column;
+    out property <bool> settings-open: settings-dialog.shown;
 
     callback refresh();
     callback open-article(int);
@@ -151,6 +153,19 @@ export component AppWindow inherits Window {
                 root.intro-skipped = true;
                 return accept;
             }
+            // The settings modal doesn't take focus; keep keys from reaching
+            // the list or reader underneath it.
+            if (settings-dialog.shown) {
+                if (event.text == Key.Escape) {
+                    settings-dialog.close();
+                    return accept;
+                }
+                return reject;
+            }
+            if (event.modifiers.control && event.text == ",") {
+                settings-dialog.open();
+                return accept;
+            }
             if (event.text == Key.F5 || (event.modifiers.control && event.text == "r")) {
                 root.refresh();
                 return accept;
@@ -225,6 +240,7 @@ export component AppWindow inherits Window {
                 version: root.version;
                 select(id) => { root.select(id); }
                 add => { root.open-add-dialog(); }
+                settings => { settings-dialog.open(); }
                 remove(id, name) => { confirm.ask(id, name); }
                 toggle-maximize => { root.toggle-maximize-window(); }
                 toggle-theme => {
@@ -484,6 +500,11 @@ export component AppWindow inherits Window {
 
         confirm := ConfirmRemoveDialog {
             confirmed(id) => { root.remove-feed(id); }
+            closed => { keys.focus(); }
+        }
+
+        settings-dialog := SettingsDialog {
+            version: root.version;
             closed => { keys.focus(); }
         }
 

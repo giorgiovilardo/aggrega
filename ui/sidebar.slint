@@ -151,6 +151,7 @@ export component Sidebar inherits Rectangle {
     callback remove(int, string);
     callback toggle-theme();
     callback toggle-maximize();
+    callback settings();
 
     background: Theme.sidebar;
     animate background { duration: 300ms; }
@@ -274,23 +275,32 @@ export component Sidebar inherits Rectangle {
             background: Theme.rule;
         }
 
-        HorizontalLayout {
+        VerticalLayout {
             padding-top: 14px;
             padding-left: 16px;
             padding-right: 16px;
-            spacing: 10px;
+            spacing: 12px;
             PrimaryButton {
                 text: "Add source";
                 icon: Icons.plus;
                 has-icon: true;
-                horizontal-stretch: 1;
                 clicked => { root.add(); }
             }
-            VerticalLayout {
-                alignment: center;
-                ThemeSwitch {
-                    dark: root.dark;
-                    toggled => { root.toggle-theme(); }
+            HorizontalLayout {
+                IconButton {
+                    icon: Icons.settings;
+                    label: "Settings";
+                    clicked => { root.settings(); }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    ThemeSwitch {
+                        dark: root.dark;
+                        toggled => { root.toggle-theme(); }
+                    }
                 }
             }
         }

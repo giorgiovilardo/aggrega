@@ -1117,6 +1117,50 @@ mod tests {
     }
 
     #[test]
+    fn settings_open_from_the_sidebar_and_switch_tabs() {
+        let (ui, _app, dir) = start("settings");
+        let button = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label} button"))
+        };
+        let shows = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .is_some()
+        };
+        assert!(!ui.get_settings_open());
+
+        button("Settings").invoke_accessible_default_action();
+        assert!(ui.get_settings_open());
+        // Let the modal fade in.
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert!(shows("Take your edition with you"), "opens on Export");
+        assert!(!shows(env!("CARGO_PKG_VERSION")));
+
+        button("About").invoke_accessible_default_action();
+        assert!(shows(env!("CARGO_PKG_VERSION")));
+        assert!(!shows("Take your edition with you"));
+        // Slint Royalty-free License attribution, at the bottom of the pane.
+        ui.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(700., 400.),
+            delta_x: 0.,
+            delta_y: -2000.,
+        });
+        assert!(shows("#MadeWithSlint"));
+
+        press(&ui, Key::Escape);
+        assert!(!ui.get_settings_open());
+
+        press(&ui, ",");
+        assert!(!ui.get_settings_open(), "plain comma does nothing");
+        button("Settings").invoke_accessible_default_action();
+        button("Close settings").invoke_accessible_default_action();
+        assert!(!ui.get_settings_open());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn host_names_for_the_reader() {
         assert_eq!(host_of("https://www.example.com/a/b"), "example.com");
         assert_eq!(host_of("https://blog.example.org/"), "blog.example.org");

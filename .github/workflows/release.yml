@@ -1,6 +1,7 @@
 # Builds an Arch Linux binary and a macOS app whenever a version tag (v0.0.1, v1.2.3, ...) is pushed.
 # The tag becomes the app version: Cargo.toml is rewritten before the build, so
-# `CARGO_PKG_VERSION` (shown in the sidebar) matches the tag.
+# `CARGO_PKG_VERSION` (shown in the sidebar and the About tab) matches the tag;
+# both jobs check `aggrega --version` against it.
 name: Release build
 
 on:
@@ -44,6 +45,10 @@ jobs:
         # Not --locked: the version bump rewrites aggrega's own entry in Cargo.lock.
         # Dependencies stay pinned by the committed lock file.
         run: cargo build --release
+
+      - name: Check version
+        # The binary (sidebar, About tab) must report the tag's version.
+        run: test "$(target/release/aggrega --version)" = "aggrega ${{ steps.version.outputs.version }}"
 
       - name: Package
         id: package
@@ -95,6 +100,7 @@ jobs:
 
       - name: Check version and name
         run: |
+          test "$(dist/Aggrega.app/Contents/MacOS/aggrega --version)" = "aggrega ${{ steps.version.outputs.version }}"
           plist=dist/Aggrega.app/Contents/Info.plist
           for key in CFBundleShortVersionString CFBundleVersion; do
             test "$(/usr/libexec/PlistBuddy -c "Print $key" "$plist")" = "${{ steps.version.outputs.version }}"

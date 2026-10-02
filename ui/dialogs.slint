@@ -2,10 +2,14 @@ import { Theme, Icons, Fonts } from "theme.slint";
 import { GhostButton, PrimaryButton } from "widgets.slint";
 
 // Shared modal chrome: dimmed backdrop + paper card that rises and fades in.
-component Modal inherits Rectangle {
+export component Modal inherits Rectangle {
     in property <bool> shown;
     in property <bool> dismissable: true;
     in property <length> card-width: 540px;
+    // Fixed height (clamped to the window) instead of fitting the content.
+    in property <length> card-height: 0px;
+    // Content goes edge to edge, for layouts that draw their own panes.
+    in property <bool> bare: false;
     callback dismiss();
 
     visible: self.opacity > 0.01;
@@ -25,7 +29,8 @@ component Modal inherits Rectangle {
 
     card := Rectangle {
         width: min(root.card-width, parent.width - 48px);
-        height: body.preferred-height;
+        height: root.card-height > 0px ? min(root.card-height, parent.height - 48px) : body.preferred-height;
+        clip: root.bare;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2 + (root.shown ? 0px : 28px);
         animate y { duration: 380ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
@@ -37,30 +42,32 @@ component Modal inherits Rectangle {
         drop-shadow-offset-y: 18px;
         drop-shadow-color: Theme.shadow;
 
-        // Red top rule, like a section header.
+        // Swallow clicks so they don't reach the backdrop.
+        TouchArea { }
+
+        body := VerticalLayout {
+            padding: root.bare ? 0px : 32px;
+            padding-top: root.bare ? 0px : 30px;
+            spacing: 14px;
+            @children
+        }
+
+        // Red top rule, like a section header. Drawn last so bare content
+        // can't cover it.
         Rectangle {
             y: 0;
             height: 4px;
             border-radius: 6px;
             background: Theme.accent;
         }
-
-        // Swallow clicks so they don't reach the backdrop.
-        TouchArea { }
-
-        body := VerticalLayout {
-            padding: 32px;
-            padding-top: 30px;
-            spacing: 14px;
-            @children
-        }
     }
 }
 
-component DialogHeader inherits VerticalLayout {
+export component DialogHeader inherits VerticalLayout {
     in property <string> kicker;
     in property <string> title;
     in property <string> subtitle;
+    in property <color> subtitle-color: Theme.text-muted;
 
     spacing: 8px;
     padding-bottom: 8px;
@@ -87,7 +94,7 @@ component DialogHeader inherits VerticalLayout {
         wrap: word-wrap;
         font-family: Fonts.serif;
         font-size: 15.5px;
-        color: Theme.text-muted;
+        color: root.subtitle-color;
     }
 }
 

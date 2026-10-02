@@ -78,7 +78,7 @@ cargo clippy -- -D warnings
 
 The tests don't touch the network or your real data. The storage tests use a temporary directory.
 
-The UI tests in `src/app.rs` create the real window with Slint's headless testing backend (`i-slint-backend-testing`, a dev-dependency pinned to the exact `slint` version), so they need no display. They check the responsive layout at several window sizes and drive the reader view: opening an article, swapping a summary for the full page, pictures, read state, and closing it with `Esc` or the back button. When you upgrade `slint`, bump `i-slint-backend-testing` to the same version.
+The UI tests in `src/app.rs` create the real window with Slint's headless testing backend (`i-slint-backend-testing`, a dev-dependency pinned to the exact `slint` version), so they need no display. They check the responsive layout at several window sizes and drive the reader view: opening an article, swapping a summary for the full page, pictures, read state, and closing it with `Esc` or the back button. They also open the settings modal and switch its tabs. When you upgrade `slint`, bump `i-slint-backend-testing` to the same version.
 
 ## 5. Install on Arch Linux
 
@@ -115,7 +115,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar shows it under the logo. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file and the icon. The same run also builds the macOS app (see below). Local builds show the version from `Cargo.toml`.
+The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar (under the logo) and the About tab in Settings show it. Both jobs fail if `aggrega --version` doesn't print the tag's version. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file and the icon. The same run also builds the macOS app (see below). Local builds show the version from `Cargo.toml`.
 
 ## 6. macOS
 

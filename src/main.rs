@@ -64,6 +64,12 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
 }
 
 fn main() -> Result<()> {
+    // Lets release builds check the compiled-in version against the tag.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("aggrega {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let paths = Paths::new()?;
     let store =
         Store::open(&paths.db).with_context(|| format!("opening {}", paths.db.display()))?;
