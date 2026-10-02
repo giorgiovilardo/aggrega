@@ -24,6 +24,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 lipo -create -output "$app/Contents/MacOS/aggrega" \
     $(for t in $targets; do echo "target/$t/release/aggrega"; done)
 sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+cp LICENSE assets/fonts/OFL.txt "$app/Contents/Resources/"
 
 # .icns from the SVG: every size iconutil expects, at 1x and 2x.
 iconset="dist/aggrega.iconset"

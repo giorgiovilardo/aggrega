@@ -69,7 +69,7 @@ Each release run builds a universal `Aggrega.app` (Apple silicon and Intel, macO
 | Subscriptions, articles, read state, settings | `~/.local/share/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` |
 | Thumbnail cache (safe to delete) | `~/.cache/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` |
 
-On Linux, both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`. Setting `AGGREGA_HOME` keeps everything in that one directory instead (`aggrega.db` and `thumbs/`), which is handy for a separate or throwaway profile. To start fresh, quit Aggrega and delete the two directories. Read articles older than 90 days are pruned automatically.
+On Linux, both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`. Setting `AGGREGA_HOME` keeps everything in that one directory instead (`aggrega.db` and `thumbs/`), which is handy for a separate or throwaway profile. **Settings → About** shows the paths in use, with buttons to open each folder. To start fresh, quit Aggrega and delete the two directories. Read articles older than 90 days are pruned automatically.
 
 ## Documentation
 

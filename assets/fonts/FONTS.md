@@ -13,4 +13,6 @@ The SIL Open Font License 1.1 is available at <https://openfontlicense.org>.
 It allows these fonts to be bundled and redistributed with software. You may not sell
 them by themselves, and any modified version must not use the Reserved Font Names.
 
-Before distributing Aggrega builds, add the full OFL text next to this file as `OFL.txt`.
+The full OFL text, with both copyright notices, is in [`OFL.txt`](OFL.txt). It ships with
+every release package, and the About tab in Settings repeats the notices (the converted
+files' name tables carry no copyright string of their own).

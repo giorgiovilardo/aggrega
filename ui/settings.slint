@@ -59,10 +59,15 @@ component SettingsTab inherits Rectangle {
     }
 }
 
-// A label / value line in a hairline-ruled table.
+// A label / value line in a hairline-ruled table, with an optional action
+// link ("Open", "Show folder") at the end.
 component FactRow inherits VerticalLayout {
     in property <string> label;
     in property <string> value;
+    in property <string> action;
+    // Long unbroken values such as file paths wrap anywhere.
+    in property <bool> path: false;
+    callback act();
 
     HorizontalLayout {
         padding-top: 11px;
@@ -82,16 +87,53 @@ component FactRow inherits VerticalLayout {
             horizontal-stretch: 1;
             text: root.value;
             vertical-alignment: center;
-            wrap: word-wrap;
-            font-family: Fonts.serif;
-            font-size: 15px;
+            wrap: root.path ? char-wrap : word-wrap;
+            font-family: root.path ? Fonts.sans : Fonts.serif;
+            font-size: root.path ? 13px : 15px;
             color: Theme.ink;
+        }
+        if root.action != "": Rectangle {
+            accessible-role: button;
+            accessible-label: root.label + ": " + root.action;
+            accessible-action-default => { root.act(); }
+            width: link.preferred-width;
+
+            link := Text {
+                text: root.action;
+                vertical-alignment: center;
+                font-family: Fonts.sans-semibold;
+                font-weight: 600;
+                font-size: 13px;
+                color: touch.has-hover ? Theme.accent-strong : Theme.accent;
+                animate color { duration: 140ms; }
+            }
+            // Underline on hover.
+            Rectangle {
+                y: (parent.height + link.preferred-height) / 2;
+                height: 1px;
+                background: Theme.accent-strong;
+                opacity: touch.has-hover ? 1 : 0;
+                animate opacity { duration: 140ms; }
+            }
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.act(); }
+            }
         }
     }
     Rectangle {
         height: 1px;
         background: Theme.rule;
     }
+}
+
+// Small-caps heading above a block of the About tab.
+component SectionKicker inherits Text {
+    font-family: Fonts.sans-bold;
+    font-weight: 700;
+    font-size: 10.5px;
+    letter-spacing: 1.4px;
+    color: Theme.text-faint;
 }
 
 component CreditNote inherits Text {
@@ -167,6 +209,11 @@ component ExportPane inherits VerticalLayout {
 
 component AboutPane inherits VerticalLayout {
     in property <string> version;
+    in property <string> repository;
+    in property <string> db-path;
+    in property <string> thumbs-path;
+    callback open-link(string);
+    callback open-data-folder(bool);
 
     padding: 40px;
     padding-top: 38px;
@@ -181,18 +228,31 @@ component AboutPane inherits VerticalLayout {
         letter-spacing: 2px;
         color: Theme.accent;
     }
-    Text {
-        text: "Aggrega";
-        font-family: Fonts.serif-black;
-        font-weight: 900;
-        font-size: 52px;
-        letter-spacing: -1.5px;
-        color: Theme.accent;
+    HorizontalLayout {
+        alignment: start;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../assets/aggrega.svg");
+                width: 56px;
+                height: 56px;
+                accessible-label: "Aggrega icon";
+            }
+        }
+        Text {
+            text: "Aggrega";
+            font-family: Fonts.serif-black;
+            font-weight: 900;
+            font-size: 52px;
+            letter-spacing: -1.5px;
+            color: Theme.accent;
+        }
     }
     HorizontalLayout {
         alignment: start;
         Rectangle {
-            width: 240px;
+            width: 312px;
             height: 2px;
             background: Theme.ink;
         }
@@ -226,12 +286,58 @@ component AboutPane inherits VerticalLayout {
             value: root.version;
         }
         FactRow {
-            label: "License";
-            value: "MIT";
+            label: "Copyright";
+            value: "© 2026 Salvatore Laisa";
         }
         FactRow {
-            label: "Built with";
-            value: "Rust, Slint and SQLite";
+            label: "License";
+            value: "MIT";
+            action: "Read";
+            act => { root.open-link(root.repository + "/blob/main/LICENSE"); }
+        }
+        FactRow {
+            label: "Source code";
+            value: root.repository;
+            action: "Open";
+            act => { root.open-link(root.repository); }
+        }
+        FactRow {
+            label: "Issues";
+            value: "Report a bug or suggest an idea";
+            action: "Open";
+            act => { root.open-link(root.repository + "/issues"); }
+        }
+    }
+
+    // Where the profile lives (README: "Where is my data?").
+    VerticalLayout {
+        padding-top: 26px;
+        spacing: 10px;
+        SectionKicker {
+            text: "YOUR DATA";
+        }
+        VerticalLayout {
+            Rectangle {
+                height: 1px;
+                background: Theme.rule;
+            }
+            FactRow {
+                label: "Database";
+                value: root.db-path;
+                path: true;
+                action: "Show folder";
+                act => { root.open-data-folder(false); }
+            }
+            FactRow {
+                label: "Thumbnails";
+                value: root.thumbs-path;
+                path: true;
+                action: "Show folder";
+                act => { root.open-data-folder(true); }
+            }
+        }
+        CreditNote {
+            text: "Sources, articles and settings live in the database. The thumbnail cache is safe to delete; it refills as you browse.";
         }
     }
 
@@ -239,19 +345,14 @@ component AboutPane inherits VerticalLayout {
     VerticalLayout {
         padding-top: 26px;
         spacing: 10px;
-        Text {
+        SectionKicker {
             text: "CREDITS";
-            font-family: Fonts.sans-bold;
-            font-weight: 700;
-            font-size: 10.5px;
-            letter-spacing: 1.4px;
-            color: Theme.text-faint;
         }
         CreditNote {
             text: "The interface is built with Slint, © SixtyFPS GmbH, used under the Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0.";
         }
         CreditNote {
-            text: "Source Serif 4, © 2014–2021 Adobe Systems Incorporated, with Reserved Font Name “Source”, and Libre Franklin, © 2020 The Libre Franklin Project Authors, are used under the SIL Open Font License 1.1.";
+            text: "Source Serif 4, © 2014–2021 Adobe, with Reserved Font Name “Source”, and Libre Franklin, © 2020 The Libre Franklin Project Authors, are used under the SIL Open Font License 1.1, included with Aggrega as OFL.txt.";
         }
         CreditNote {
             text: "Storage is powered by SQLite, which is in the public domain. Other open-source libraries are used under their own licenses, including MIT, Apache 2.0, BSD, ISC, Zlib, MPL 2.0 and Unicode.";
@@ -273,7 +374,12 @@ component AboutPane inherits VerticalLayout {
 // selected tab's content on the right.
 export component SettingsDialog inherits Rectangle {
     in property <string> version;
+    in property <string> repository;
+    in property <string> db-path;
+    in property <string> thumbs-path;
     callback closed();
+    callback open-link(string);
+    callback open-data-folder(bool);
 
     out property <bool> shown: false;
     in-out property <int> tab: 0;
@@ -365,6 +471,11 @@ export component SettingsDialog inherits Rectangle {
                         visible: root.tab == 1;
                         width: parent.width;
                         version: root.version;
+                        repository: root.repository;
+                        db-path: root.db-path;
+                        thumbs-path: root.thumbs-path;
+                        open-link(url) => { root.open-link(url); }
+                        open-data-folder(thumbs) => { root.open-data-folder(thumbs); }
                     }
                 }
 

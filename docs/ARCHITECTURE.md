@@ -36,7 +36,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` build on them, `fetch` adds HTTP on top of `feed`, and `app` uses everything. `db` needs only `feed`'s data types, plus `fetch::is_unreachable` to tell an offline refresh from a broken source.
 | `ui/theme.slint` | `Theme` global with every colour token, switched by `Theme.dark`, plus the `Icons` global |
 | `ui/app.slint` | `AppWindow`: responsive layout, header, list, toast, keyboard shortcuts, and the public API used from Rust |
-| `ui/settings.slint` | `SettingsDialog`: a large modal with a vertical tab rail (Export, About) and the selected tab's pane, opened from the gear in the sidebar footer or `Ctrl+,` |
+| `ui/settings.slint` | `SettingsDialog`: a large modal with a vertical tab rail (Export, About) and the selected tab's pane, opened from the gear in the sidebar footer or `Ctrl+,`. About shows the version, copyright, license, project links, this profile's data paths and the third-party credits, including the `AboutSlint` widget the Slint Royalty-free License requires |
 | `ui/reader.slint` | `ReaderView`: toolbar, headline, lead photo and one `BlockView` per content block, in a scrollable column |
 
 ## Threading model

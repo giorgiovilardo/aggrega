@@ -37,6 +37,7 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     );
 
     ui.set_version(env!("CARGO_PKG_VERSION").into());
+    ui.set_repository(env!("CARGO_PKG_REPOSITORY").into());
 
     let app = App::install(ui, store, paths)?;
 
@@ -50,6 +51,8 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_close_reader(|| with_app(|a| a.close_reader()));
     ui.on_open_original(|| with_app(|a| a.open_original()));
     ui.on_reader_toggle_read(|| with_app(|a| a.reader_toggle_read()));
+    ui.on_open_link(|url| with_app(|a| a.open_link(url)));
+    ui.on_open_data_folder(|thumbs| with_app(|a| a.open_data_folder(thumbs)));
     ui.on_theme_changed(|dark| with_app(|a| a.save_theme(dark)));
 
     // Custom title bar: minimise/maximise are handled in Slint, closing here.

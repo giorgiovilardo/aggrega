@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "A fast, lightweight, local-first RSS/Atom feed reader"
 license = "MIT"
+repository = "https://github.com/moebiusmania/aggrega"
 publish = false
 readme = "README.md"
 

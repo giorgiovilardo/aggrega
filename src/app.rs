@@ -42,6 +42,14 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// `path` for display, with the home directory shortened to `~`.
+fn display_path(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|h| path.strip_prefix(h).ok()) {
+        Some(rest) => Path::new("~").join(rest).display().to_string(),
+        None => path.display().to_string(),
+    }
+}
+
 pub struct Paths {
     pub db: PathBuf,
     pub thumbs: PathBuf,
@@ -114,6 +122,9 @@ impl App {
         ui.set_articles(ModelRc::from(articles.clone()));
         ui.set_feeds(ModelRc::from(feeds.clone()));
         ui.set_reader_blocks(ModelRc::from(reader_blocks.clone()));
+        let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
+        ui.set_db_path(display_path(&paths.db, home.as_deref()).into());
+        ui.set_thumbs_path(display_path(&paths.thumbs, home.as_deref()).into());
 
         let last_refresh = store.setting("last_refresh")?.and_then(|v| v.parse().ok());
         let app = Rc::new(App {
@@ -623,6 +634,25 @@ impl App {
         }
         if let Err(e) = open::that_detached(&link) {
             self.toast(format!("Couldn't open the browser: {e}"));
+        }
+    }
+
+    /// Opens a link from the About tab in the browser.
+    pub fn open_link(&self, url: SharedString) {
+        if let Err(e) = open::that_detached(url.as_str()) {
+            self.toast(format!("Couldn't open the browser: {e}"));
+        }
+    }
+
+    /// Shows the database folder, or the thumbnail cache, in the file manager.
+    pub fn open_data_folder(&self, thumbs: bool) {
+        let dir = if thumbs {
+            self.paths.thumbs.as_path()
+        } else {
+            self.paths.db.parent().unwrap_or(&self.paths.db)
+        };
+        if let Err(e) = open::that_detached(dir) {
+            self.toast(format!("Couldn't open the folder: {e}"));
         }
     }
 
@@ -1140,6 +1170,9 @@ mod tests {
 
         button("About").invoke_accessible_default_action();
         assert!(shows(env!("CARGO_PKG_VERSION")));
+        assert!(shows(env!("CARGO_PKG_REPOSITORY")));
+        assert!(shows(dir.join("aggrega.db").to_str().unwrap()));
+        assert!(shows("License: Read"), "links to the license text");
         assert!(!shows("Take your edition with you"));
         // Slint Royalty-free License attribution, at the bottom of the pane.
         ui.window().dispatch_event(WindowEvent::PointerScrolled {
@@ -1158,6 +1191,26 @@ mod tests {
         button("Close settings").invoke_accessible_default_action();
         assert!(!ui.get_settings_open());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn data_paths_are_shown_relative_to_home() {
+        let home = Path::new("/home/ada");
+        assert_eq!(
+            display_path(
+                Path::new("/home/ada/.local/share/aggrega/aggrega.db"),
+                Some(home)
+            ),
+            "~/.local/share/aggrega/aggrega.db"
+        );
+        assert_eq!(
+            display_path(Path::new("/tmp/agg/aggrega.db"), Some(home)),
+            "/tmp/agg/aggrega.db"
+        );
+        assert_eq!(
+            display_path(Path::new("/tmp/agg/thumbs"), None),
+            "/tmp/agg/thumbs"
+        );
     }
 
     #[test]

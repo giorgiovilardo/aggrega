@@ -48,6 +48,10 @@ export component AppWindow inherits Window {
     in property <string> status-text;
     in property <string> today;
     in property <string> version;
+    // About tab: project link and where this profile's data lives.
+    in property <string> repository;
+    in property <string> db-path;
+    in property <string> thumbs-path;
     in property <bool> adding;
     in-out property <string> add-error;
 
@@ -77,6 +81,10 @@ export component AppWindow inherits Window {
     // The reader was closed; Rust drops its content.
     callback close-reader();
     callback open-original();
+    // Opens a web link from Settings in the browser.
+    callback open-link(string);
+    // Shows the database folder (false) or the thumbnail cache (true).
+    callback open-data-folder(bool);
     callback reader-toggle-read();
 
     // `minimized` / `maximized` are built-in Window properties, kept in sync
@@ -505,7 +513,12 @@ export component AppWindow inherits Window {
 
         settings-dialog := SettingsDialog {
             version: root.version;
+            repository: root.repository;
+            db-path: root.db-path;
+            thumbs-path: root.thumbs-path;
             closed => { keys.focus(); }
+            open-link(url) => { root.open-link(url); }
+            open-data-folder(thumbs) => { root.open-data-folder(thumbs); }
         }
 
         // Opening sequence: a paper "front page" that sets the masthead and then
