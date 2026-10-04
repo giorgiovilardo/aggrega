@@ -17,6 +17,10 @@ feed-rs = "2.4"
 html-escape = "0.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 open = "5"
+# Native open/save dialogs for OPML files. On Linux it asks the XDG desktop
+# portal over D-Bus (libdbus is loaded at run time, with zenity as a fallback):
+# no GTK, no async runtime.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 ureq = "3"
 url = "2"

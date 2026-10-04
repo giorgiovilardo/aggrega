@@ -43,6 +43,11 @@ export component PrimaryButton inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
     height: 40px;
     border-radius: self.height / 2;
     background: !root.enabled ? Theme.chip : touch.pressed || touch.has-hover ? Theme.accent-strong : Theme.accent;
@@ -80,7 +85,13 @@ export component PrimaryButton inherits Rectangle {
 
 export component GhostButton inherits Rectangle {
     in property <string> text;
+    in property <bool> enabled: true;
     callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
 
     height: 40px;
     border-radius: self.height / 2;
@@ -94,7 +105,7 @@ export component GhostButton inherits Rectangle {
         padding-right: 20px;
         Text {
             text: root.text.to-uppercase();
-            color: Theme.ink;
+            color: root.enabled ? Theme.ink : Theme.text-faint;
             font-family: Fonts.sans-bold;
             font-weight: 700;
             font-size: 12.5px;
@@ -104,7 +115,8 @@ export component GhostButton inherits Rectangle {
     }
 
     touch := TouchArea {
-        mouse-cursor: pointer;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
         clicked => { root.clicked(); }
     }
 }
@@ -243,7 +255,10 @@ export component EmptyState inherits VerticalLayout {
     in property <string> title;
     in property <string> subtitle;
     in property <string> action;
+    // An optional second, quieter button next to `action`.
+    in property <string> secondary;
     callback act();
+    callback secondary-act();
 
     alignment: center;
     spacing: 14px;
@@ -292,11 +307,16 @@ export component EmptyState inherits VerticalLayout {
     if root.action != "": HorizontalLayout {
         alignment: center;
         padding-top: 14px;
+        spacing: 12px;
         PrimaryButton {
             text: root.action;
             icon: Icons.plus;
             has-icon: true;
             clicked => { root.act(); }
+        }
+        if root.secondary != "": GhostButton {
+            text: root.secondary;
+            clicked => { root.secondary-act(); }
         }
     }
 }

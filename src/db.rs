@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::feed::{FeedJob, FetchResult, Fetched};
 use crate::fetch::is_unreachable;
+use crate::opml::Source;
 
 const SCHEMA_VERSION: i32 = 2;
 
@@ -169,6 +170,21 @@ impl Store {
                 title: r.get(1)?,
                 has_error: r.get(2)?,
                 unread: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Every subscription with its URLs, by title (for OPML export and import).
+    pub fn sources(&self) -> Result<Vec<Source>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT title, url, site_url FROM feeds ORDER BY title COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Source {
+                title: r.get(0)?,
+                xml_url: r.get(1)?,
+                html_url: r.get(2)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -489,6 +505,34 @@ mod tests {
 
         store.remove_feed(id)?;
         assert!(store.articles(None, false, 10)?.is_empty());
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn lists_sources_for_export() -> Result<()> {
+        let dir = temp_dir("sources");
+        let store = Store::open(&dir.join("t.db"))?;
+        let mut zine = sample(0);
+        zine.title = "a zine".into();
+        zine.site_url = Some("https://y.org/".into());
+        store.add_feed("https://x.org/rss", &sample(1))?;
+        store.add_feed("https://y.org/feed", &zine)?;
+        assert_eq!(
+            store.sources()?,
+            [
+                Source {
+                    title: "a zine".into(),
+                    xml_url: "https://y.org/feed".into(),
+                    html_url: Some("https://y.org/".into()),
+                },
+                Source {
+                    title: "Sample".into(),
+                    xml_url: "https://x.org/rss".into(),
+                    html_url: None,
+                },
+            ]
+        );
         std::fs::remove_dir_all(&dir)?;
         Ok(())
     }

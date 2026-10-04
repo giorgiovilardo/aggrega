@@ -53,6 +53,8 @@ export component AppWindow inherits Window {
     in property <string> db-path;
     in property <string> thumbs-path;
     in property <bool> adding;
+    // An OPML import is subscribing in the background.
+    in property <bool> importing;
     in-out property <string> add-error;
 
     // Reader view: the open article and its content blocks.
@@ -86,6 +88,9 @@ export component AppWindow inherits Window {
     // Shows the database folder (false) or the thumbnail cache (true).
     callback open-data-folder(bool);
     callback reader-toggle-read();
+    // OPML: pick a file to follow its sources, or save them all to one.
+    callback import-sources();
+    callback export-sources();
 
     // `minimized` / `maximized` are built-in Window properties, kept in sync
     // with the real window state by Slint.
@@ -376,6 +381,8 @@ export component AppWindow inherits Window {
                         subtitle: "Follow blogs, newspapers and YouTube channels.\nEverything stays on this computer — no account, no cloud.";
                         action: "Add your first source";
                         act => { root.open-add-dialog(); }
+                        secondary: root.importing ? "Importing…" : "Import from OPML";
+                        secondary-act => { if (!root.importing) { root.import-sources(); } }
                     }
 
                     if root.has-feeds && root.articles.length == 0: EmptyState {
@@ -516,7 +523,11 @@ export component AppWindow inherits Window {
             repository: root.repository;
             db-path: root.db-path;
             thumbs-path: root.thumbs-path;
+            has-feeds: root.has-feeds;
+            importing: root.importing;
             closed => { keys.focus(); }
+            import-sources => { root.import-sources(); }
+            export-sources => { root.export-sources(); }
             open-link(url) => { root.open-link(url); }
             open-data-folder(thumbs) => { root.open-data-folder(thumbs); }
         }

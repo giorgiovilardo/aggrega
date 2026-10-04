@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="1.0">
+	<head>
+		<title>Subscriptions of Ada from Inoreader [https://www.inoreader.com]</title>
+	</head>
+	<body>
+		<outline text="Blogs" title="Blogs">
+			<outline text="Julia Evans" title="Julia Evans" type="rss" xmlUrl="https://jvns.ca/atom.xml" htmlUrl="https://jvns.ca/"/>
+			<outline text="Simon Willison&#39;s Weblog" title="Simon Willison&#39;s Weblog" type="rss" xmlUrl="https://simonwillison.net/atom/everything/" htmlUrl="https://simonwillison.net/"/>
+		</outline>
+		<outline text="Rust &amp; Systems" title="Rust &amp; Systems">
+			<outline text="This Week in Rust" title="This Week in Rust" type="rss" xmlUrl="https://this-week-in-rust.org/rss.xml" htmlUrl="https://this-week-in-rust.org/"/>
+		</outline>
+	</body>
+</opml>

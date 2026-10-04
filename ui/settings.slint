@@ -1,6 +1,6 @@
 import { AboutSlint, ScrollView } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
-import { IconButton } from "widgets.slint";
+import { GhostButton, IconButton, PrimaryButton } from "widgets.slint";
 import { DialogHeader, Modal } from "dialogs.slint";
 
 // One entry in the settings rail, styled like a sidebar row.
@@ -143,67 +143,103 @@ component CreditNote inherits Text {
     color: Theme.text-body;
 }
 
-component ExportPane inherits VerticalLayout {
+// A bordered row: icon, title and description, and a button at the end.
+component ActionCard inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> body;
+    in property <string> action;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback act();
+
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.rule;
+    background: Theme.bg;
+
+    HorizontalLayout {
+        padding: 18px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: start;
+            Image {
+                source: root.icon;
+                width: 20px;
+                height: 20px;
+                colorize: Theme.accent;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            Text {
+                text: root.title;
+                font-family: Fonts.sans-bold;
+                font-weight: 700;
+                font-size: 14px;
+                color: Theme.ink;
+            }
+            Text {
+                text: root.body;
+                wrap: word-wrap;
+                font-family: Fonts.serif;
+                font-size: 14.5px;
+                color: Theme.text-body;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            if root.primary: PrimaryButton {
+                text: root.action;
+                enabled: root.enabled;
+                clicked => { root.act(); }
+            }
+            if !root.primary: GhostButton {
+                text: root.action;
+                enabled: root.enabled;
+                clicked => { root.act(); }
+            }
+        }
+    }
+}
+
+// Moving sources in and out of Aggrega as OPML.
+component TransferPane inherits VerticalLayout {
+    in property <bool> has-feeds;
+    in property <bool> importing;
+    callback import-sources();
+    callback export-sources();
+
     padding: 40px;
     padding-top: 38px;
     spacing: 18px;
     alignment: start;
 
     DialogHeader {
-        kicker: "Export";
+        kicker: "Import & export";
         title: "Take your edition with you";
-        subtitle: "Save your sources to a file, to keep as a backup or to bring to another feed reader.";
+        subtitle: "Bring your sources over from another feed reader, or save them to a file as a backup.";
         subtitle-color: Theme.text-body;
     }
 
-    Rectangle {
-        border-radius: 4px;
-        border-width: 1px;
-        border-color: Theme.rule;
-        background: Theme.bg;
+    ActionCard {
+        icon: Icons.download;
+        title: "Import from OPML";
+        body: "Follow every source in a file exported by another feed reader. Ones you already follow are skipped.";
+        action: root.importing ? "Importing…" : "Import…";
+        primary: true;
+        enabled: !root.importing;
+        act => { root.import-sources(); }
+    }
 
-        HorizontalLayout {
-            padding: 18px;
-            spacing: 14px;
-            VerticalLayout {
-                alignment: start;
-                Image {
-                    source: Icons.rss;
-                    width: 20px;
-                    height: 20px;
-                    colorize: Theme.accent;
-                }
-            }
-            VerticalLayout {
-                horizontal-stretch: 1;
-                spacing: 4px;
-                Text {
-                    text: "Sources as OPML";
-                    font-family: Fonts.sans-bold;
-                    font-weight: 700;
-                    font-size: 14px;
-                    color: Theme.ink;
-                }
-                Text {
-                    text: "The standard subscription list that every feed reader can import.";
-                    wrap: word-wrap;
-                    font-family: Fonts.serif;
-                    font-size: 14.5px;
-                    color: Theme.text-body;
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                Text {
-                    text: "COMING SOON";
-                    font-family: Fonts.sans-bold;
-                    font-weight: 700;
-                    font-size: 10px;
-                    letter-spacing: 1.4px;
-                    color: Theme.text-faint;
-                }
-            }
-        }
+    ActionCard {
+        icon: Icons.upload;
+        title: "Export as OPML";
+        body: "The standard subscription list that every feed reader can import.";
+        action: "Export…";
+        enabled: root.has-feeds;
+        act => { root.export-sources(); }
     }
 }
 
@@ -377,7 +413,11 @@ export component SettingsDialog inherits Rectangle {
     in property <string> repository;
     in property <string> db-path;
     in property <string> thumbs-path;
+    in property <bool> has-feeds;
+    in property <bool> importing;
     callback closed();
+    callback import-sources();
+    callback export-sources();
     callback open-link(string);
     callback open-data-folder(bool);
 
@@ -441,7 +481,7 @@ export component SettingsDialog inherits Rectangle {
                     }
 
                     SettingsTab {
-                        label: "Export";
+                        label: "Import & export";
                         icon: Icons.download;
                         selected: root.tab == 0;
                         clicked => { root.tab = 0; }
@@ -461,11 +501,15 @@ export component SettingsDialog inherits Rectangle {
 
                 ScrollView {
                     content-width: self.visible-width;
-                    content-height: max(self.visible-height, root.tab == 0 ? export-pane.preferred-height : about-pane.preferred-height);
+                    content-height: max(self.visible-height, root.tab == 0 ? transfer-pane.preferred-height : about-pane.preferred-height);
 
-                    export-pane := ExportPane {
+                    transfer-pane := TransferPane {
                         visible: root.tab == 0;
                         width: parent.width;
+                        has-feeds: root.has-feeds;
+                        importing: root.importing;
+                        import-sources => { root.import-sources(); }
+                        export-sources => { root.export-sources(); }
                     }
                     about-pane := AboutPane {
                         visible: root.tab == 1;

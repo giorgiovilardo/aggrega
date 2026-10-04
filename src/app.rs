@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::db::{RefreshSummary, Store};
+use crate::opml::{self, Source};
 use crate::reader::{self, Block};
 use crate::{
     AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, fetch, pool, text, thumbs,
@@ -805,11 +806,167 @@ impl App {
         self.toast(format!("Removed {title}"));
     }
 
+    // ---- OPML import / export ----------------------------------------------
+
+    /// Asks for an OPML file and subscribes to the sources in it.
+    pub fn import_sources(&self) {
+        if self.ui().get_importing() {
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Import sources")
+            .add_filter("OPML", &["opml", "xml"])
+            .pick_file()
+        else {
+            return;
+        };
+        self.import_file(&path);
+    }
+
+    /// Subscribes, in the background, to every source in the OPML file at
+    /// `path` that isn't followed yet.
+    fn import_file(&self, path: &Path) {
+        let sources = match std::fs::read(path)
+            .with_context(|| format!("couldn't read {}", path.display()))
+            .and_then(|bytes| opml::parse(&String::from_utf8_lossy(&bytes)))
+        {
+            Ok(s) => s,
+            Err(e) => return self.report("Couldn't import", e),
+        };
+        let known: HashSet<String> = match self.store.sources() {
+            Ok(s) => s.into_iter().map(|s| s.xml_url).collect(),
+            Err(e) => return self.report("Couldn't import", e),
+        };
+        let total = sources.len();
+        let fresh: Vec<Source> = sources
+            .into_iter()
+            .filter(|s| {
+                let url = fetch::normalize_url(&s.xml_url).unwrap_or_else(|_| s.xml_url.clone());
+                !known.contains(&url)
+            })
+            .collect();
+        let skipped = total - fresh.len();
+        if fresh.is_empty() {
+            return self.toast(match total {
+                0 => "No sources found in that file".to_string(),
+                n => format!("You already follow {}", count(n, "source")),
+            });
+        }
+
+        self.ui().set_importing(true);
+        self.toast(format!("Importing {}…", count(fresh.len(), "source")));
+        let agent = self.agent.clone();
+        let db_path = self.paths.db.clone();
+        std::thread::spawn(move || {
+            let summary = subscribe_all(&agent, &db_path, &fresh)
+                .map(|s| ImportSummary {
+                    skipped: s.skipped + skipped,
+                    ..s
+                })
+                .map_err(|e| format!("{e:#}"));
+            let _ = slint::invoke_from_event_loop(move || with_app(|app| app.import_done(summary)));
+        });
+    }
+
+    fn import_done(&self, summary: Result<ImportSummary, String>) {
+        self.ui().set_importing(false);
+        self.reload_all();
+        match summary {
+            Ok(s) => self.toast(s.message()),
+            Err(e) => self.toast(format!("Import failed: {e}")),
+        }
+    }
+
+    /// Asks where to save, then writes every source there as OPML.
+    pub fn export_sources(&self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Export sources")
+            .set_file_name("aggrega-sources.opml")
+            .add_filter("OPML", &["opml"])
+            .save_file()
+        else {
+            return;
+        };
+        match self.export_to(&path) {
+            Ok(n) => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                self.toast(format!("Exported {} to {name}", count(n, "source")));
+            }
+            Err(e) => self.report("Couldn't export", e),
+        }
+    }
+
+    /// Writes every source to `path` as OPML; returns how many.
+    fn export_to(&self, path: &Path) -> Result<usize> {
+        let sources = self.store.sources()?;
+        let created = chrono::Utc::now().to_rfc2822();
+        std::fs::write(path, opml::write(&sources, &created))
+            .with_context(|| format!("couldn't write {}", path.display()))?;
+        Ok(sources.len())
+    }
+
     pub fn save_theme(&self, dark: bool) {
         let _ = self
             .store
             .set_setting("theme", if dark { "dark" } else { "light" });
     }
+}
+
+/// What an OPML import did, for the toast.
+#[derive(Debug, Default, PartialEq)]
+struct ImportSummary {
+    added: usize,
+    /// Already followed, or leading to a feed that is.
+    skipped: usize,
+    /// Answered with an error, or not a feed.
+    failed: usize,
+    /// Couldn't be reached at all.
+    unreachable: usize,
+}
+
+impl ImportSummary {
+    fn message(&self) -> String {
+        if self.added == 0 && self.failed == 0 && self.unreachable > 0 {
+            return "You're offline  ·  nothing was imported".into();
+        }
+        let mut parts = vec![format!("Imported {}", count(self.added, "source"))];
+        if self.skipped > 0 {
+            parts.push(format!("{} already followed", self.skipped));
+        }
+        let failed = self.failed + self.unreachable;
+        if failed > 0 {
+            parts.push(format!("{failed} couldn't be added"));
+        }
+        parts.join("  ·  ")
+    }
+}
+
+/// "1 source", "3 sources".
+fn count(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
+/// Subscribes to `sources` in parallel (with feed discovery, like the Add
+/// dialog), then stores each one that works, with its first articles.
+fn subscribe_all(agent: &ureq::Agent, db: &Path, sources: &[Source]) -> Result<ImportSummary> {
+    let results = pool::par_map(sources, 8, |s| fetch::subscribe(agent, &s.xml_url));
+    let store = Store::open(db)?;
+    // Several entries can lead to one feed, and one may have been added meanwhile.
+    let mut known: HashSet<String> = store.sources()?.into_iter().map(|s| s.xml_url).collect();
+    let mut summary = ImportSummary::default();
+    for result in results {
+        match result {
+            Ok((url, _)) if known.contains(&url) => summary.skipped += 1,
+            Ok((url, fetched)) => {
+                store.add_feed(&url, &fetched)?;
+                known.insert(url);
+                summary.added += 1;
+            }
+            Err(e) if fetch::is_unreachable(&e) => summary.unreachable += 1,
+            Err(_) => summary.failed += 1,
+        }
+    }
+    Ok(summary)
 }
 
 /// The site name shown in the reader, e.g. "example.com".
@@ -1165,7 +1322,11 @@ mod tests {
         assert!(ui.get_settings_open());
         // Let the modal fade in.
         testing::mock_elapsed_time(Duration::from_secs(1));
-        assert!(shows("Take your edition with you"), "opens on Export");
+        assert!(
+            shows("Take your edition with you"),
+            "opens on Import & export"
+        );
+        assert!(shows("Import…") && shows("Export…"));
         assert!(!shows(env!("CARGO_PKG_VERSION")));
 
         button("About").invoke_accessible_default_action();
@@ -1191,6 +1352,76 @@ mod tests {
         button("Close settings").invoke_accessible_default_action();
         assert!(!ui.get_settings_open());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn exports_every_source_as_opml() {
+        let (_ui, app, dir) = start("export");
+        let path = dir.join("out.opml");
+        assert_eq!(app.export_to(&path).unwrap(), 1);
+        let sources = opml::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            sources,
+            [Source {
+                title: "Example Blog".into(),
+                xml_url: "https://blog.example/rss".into(),
+                html_url: None,
+            }]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn importing_followed_sources_does_nothing() {
+        let (ui, app, dir) = start("import-known");
+        let path = dir.join("in.opml");
+        std::fs::write(
+            &path,
+            r#"<opml version="2.0"><body><outline text="Blog" xmlUrl="https://blog.example/rss"/></body></opml>"#,
+        )
+        .unwrap();
+        app.import_file(&path);
+        assert!(!ui.get_importing(), "nothing new, so no import starts");
+        // Not an OPML file: reported, nothing starts either.
+        std::fs::write(&path, "<rss></rss>").unwrap();
+        app.import_file(&path);
+        assert!(!ui.get_importing());
+        assert_eq!(app.store.sources().unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn imports_count_sources_that_fail() {
+        let (_ui, app, dir) = start("import-fail");
+        let dead = Source {
+            title: "Dead".into(),
+            xml_url: "http://127.0.0.1:9/feed".into(),
+            html_url: None,
+        };
+        let s = subscribe_all(&app.agent, &app.paths.db, &[dead]).unwrap();
+        assert_eq!((s.added, s.skipped, s.failed + s.unreachable), (0, 0, 1));
+        assert_eq!(app.store.sources().unwrap().len(), 1, "nothing stored");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn import_summaries() {
+        let s = |added, skipped, failed, unreachable| {
+            ImportSummary {
+                added,
+                skipped,
+                failed,
+                unreachable,
+            }
+            .message()
+        };
+        assert_eq!(s(1, 0, 0, 0), "Imported 1 source");
+        assert_eq!(
+            s(12, 3, 1, 1),
+            "Imported 12 sources  ·  3 already followed  ·  2 couldn't be added"
+        );
+        assert_eq!(s(0, 2, 0, 4), "You're offline  ·  nothing was imported");
+        assert_eq!(s(0, 0, 2, 0), "Imported 0 sources  ·  2 couldn't be added");
     }
 
     #[test]

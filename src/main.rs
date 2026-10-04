@@ -6,6 +6,7 @@ mod db;
 mod feed;
 mod fetch;
 mod html;
+mod opml;
 mod pool;
 mod reader;
 mod text;
@@ -53,6 +54,8 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_reader_toggle_read(|| with_app(|a| a.reader_toggle_read()));
     ui.on_open_link(|url| with_app(|a| a.open_link(url)));
     ui.on_open_data_folder(|thumbs| with_app(|a| a.open_data_folder(thumbs)));
+    ui.on_import_sources(|| with_app(|a| a.import_sources()));
+    ui.on_export_sources(|| with_app(|a| a.export_sources()));
     ui.on_theme_changed(|dark| with_app(|a| a.save_theme(dark)));
 
     // Custom title bar: minimise/maximise are handled in Slint, closing here.

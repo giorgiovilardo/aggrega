@@ -13,6 +13,10 @@ depends=(
   'libx11' 'libxcursor' 'libxi' 'libxrandr'
   'libglvnd' 'hicolor-icon-theme'
 )
+optdepends=(
+  'xdg-desktop-portal: file dialogs for OPML import/export'
+  'zenity: file dialogs when no desktop portal is running'
+)
 makedepends=('cargo')
 options=('!lto' '!debug')
 

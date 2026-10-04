@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <head>
+        <title>Miniflux</title>
+        <dateCreated>Sat, 03 Oct 2026 18:42:10 UTC</dateCreated>
+    </head>
+    <body>
+        <outline text="All">
+            <outline title="LWN.net" text="LWN.net" xmlUrl="https://lwn.net/headlines/rss" htmlUrl="https://lwn.net" type="rss"></outline>
+            <outline title="Hacker News: Front Page" text="Hacker News: Front Page" xmlUrl="https://hnrss.org/frontpage?points=100&amp;comments=25" htmlUrl="https://news.ycombinator.com/" type="rss"></outline>
+        </outline>
+    </body>
+</opml>

@@ -197,7 +197,8 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> 
     bail!("couldn't find an RSS, Atom or JSON feed at that address")
 }
 
-fn normalize_url(input: &str) -> Result<String> {
+/// A typed address as a full http(s) URL, the form feeds are stored under.
+pub fn normalize_url(input: &str) -> Result<String> {
     let s = input.trim();
     if s.is_empty() {
         bail!("please enter an address");

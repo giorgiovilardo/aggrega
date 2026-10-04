@@ -78,7 +78,7 @@ cargo clippy -- -D warnings
 
 The tests don't touch the network or your real data. The storage tests use a temporary directory.
 
-The UI tests in `src/app.rs` create the real window with Slint's headless testing backend (`i-slint-backend-testing`, a dev-dependency pinned to the exact `slint` version), so they need no display. They check the responsive layout at several window sizes and drive the reader view: opening an article, swapping a summary for the full page, pictures, read state, and closing it with `Esc` or the back button. They also open the settings modal and switch its tabs. When you upgrade `slint`, bump `i-slint-backend-testing` to the same version.
+The UI tests in `src/app.rs` create the real window with Slint's headless testing backend (`i-slint-backend-testing`, a dev-dependency pinned to the exact `slint` version), so they need no display. They check the responsive layout at several window sizes and drive the reader view: opening an article, swapping a summary for the full page, pictures, read state, and closing it with `Esc` or the back button. They also open the settings modal and switch its tabs, and check OPML export and import (the parser's tests read real exports from Feedly, Inoreader, NetNewsWire and Miniflux in `tests/fixtures/opml/`). When you upgrade `slint`, bump `i-slint-backend-testing` to the same version.
 
 ## 5. Install on Arch Linux
 
@@ -177,6 +177,9 @@ Its last refresh failed. The site might be down, or the feed might have moved. T
 
 **Clicking an article does nothing.**
 Aggrega opens links with `xdg-open`. Check that a default browser is set: `xdg-settings get default-web-browser`.
+
+**Import… / Export… does nothing on Linux.**
+The file dialogs go through the XDG desktop portal over D-Bus. Install `xdg-desktop-portal` plus the backend for your desktop (`xdg-desktop-portal-gtk`, `-kde`, `-gnome`…), or `zenity`, which Aggrega falls back to when no portal answers.
 
 **`error: rustc 1.xx is not supported`.**
 Update the toolchain with `rustup update stable`. Aggrega uses Rust 2024 edition features and needs Rust 1.88 or newer.

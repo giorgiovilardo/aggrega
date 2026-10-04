@@ -28,6 +28,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/feed.rs` | Feeds as plain data (`FeedJob`, `Fetched`, `NewArticle`), plus everything done offline with a download: parsing with `feed-rs`, picking each entry's thumbnail, and finding feed links in an HTML page |
 | `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
 | `src/pool.rs` | `par_map` / `par_for_each`, a tiny scoped thread pool for short blocking jobs |
+| `src/opml.rs` | OPML as plain data: `parse` reads the feeds out of any reader's export (nested folders flattened, duplicates dropped, via `html::tokenize`) and `write` produces an OPML 2.0 document. The import itself (subscribing in parallel, then storing) lives in `app.rs` |
 | `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes |
 | `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns a `SharedPixelBuffer`. Also loads reader pictures, shrunk to fit the column (not cached) |
 | `src/reader.rs` | Reader view content: HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
@@ -80,7 +81,7 @@ To change the schema, add an `if version < 3 { … PRAGMA user_version = 3; }` b
 - **Small model updates.** Marking an article read changes one row with `set_row_data`. The sidebar model is diffed with `sync_model`, so only changed rows are touched.
 - **No idle animation cost.** `animation-tick()` is only evaluated while a refresh is running, because it sits behind a `refreshing ? … : …` condition. When nothing changes, Slint doesn't redraw and CPU use is zero.
 - **Thumbnail memory is bounded.** Decoded thumbnails are 264×184 RGB (about 145 KB each), cached only for rows in the current list, and dropped on reload. The disk cache stores small JPEGs. A `.none` marker remembers URLs that failed, so they aren't retried every launch.
-- **Lean dependency set.** Slint uses only the winit backend and the femtovg OpenGL renderer; the Qt backend is off. Aggrega uses `ureq` instead of `reqwest`/Tokio, and `image` is built with just the jpeg, png, gif and webp decoders.
+- **Lean dependency set.** Slint uses only the winit backend and the femtovg OpenGL renderer; the Qt backend is off. Aggrega uses `ureq` instead of `reqwest`/Tokio, and `image` is built with just the jpeg, png, gif and webp decoders. The OPML file dialogs come from `rfd` with only its `xdg-portal` backend: on Linux it talks to the desktop portal through `libdbus`, loaded at run time (falling back to `zenity`), so there's no GTK and no async runtime.
 
 ## Design and theming
 
