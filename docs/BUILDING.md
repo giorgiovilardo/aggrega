@@ -65,7 +65,7 @@ make lint       # rustfmt check + clippy (warnings are errors)
 make install    # installs binary, .desktop and icon into ~/.local (PREFIX=... to change)
 make uninstall
 make package    # builds an Arch package with makepkg
-make macos-app  # builds a universal Aggrega.app (macOS only, see section 6)
+make macos-app  # builds Aggrega.app and a .dmg (macOS only, see section 6)
 ```
 
 ## 4. Tests and linting
@@ -119,7 +119,7 @@ The workflow builds inside an `archlinux` container and uses the tag as the app 
 
 ## 6. macOS
 
-Every version tag also produces `aggrega-<version>-macos-universal.zip`, in the same run's **Artifacts** section. It holds `Aggrega.app`, a universal binary for Apple silicon and Intel Macs running macOS 11 or newer. Unzip it and drag `Aggrega.app` to `/Applications`.
+Every version tag also produces `aggrega-<version>-macos-arm64.dmg`, in the same run's **Artifacts** section. It holds `Aggrega.app`, built for Apple silicon (M series) Macs running macOS 11 or newer; Intel Macs aren't supported. Open the disk image and drag `Aggrega.app` onto the `Applications` link.
 
 ### First launch (Gatekeeper)
 
@@ -134,13 +134,13 @@ After that it opens normally.
 
 ```bash
 xcode-select --install                                        # Apple's compilers and linker
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
+rustup target add aarch64-apple-darwin
 brew install librsvg                                          # rsvg-convert, for the icon
 make macos-app                                                # = packaging/macos/bundle.sh
 open dist/Aggrega.app
 ```
 
-`packaging/macos/bundle.sh` builds both targets, merges them with `lipo`, writes `Info.plist` from `packaging/macos/Info.plist`, renders `aggrega.icns` from `assets/aggrega.svg`, ad-hoc signs the bundle and zips it with `ditto`. For day-to-day development, plain `cargo run` works on macOS too; no extra native libraries are needed.
+`packaging/macos/bundle.sh` builds the `aarch64-apple-darwin` target, writes `Info.plist` from `packaging/macos/Info.plist`, renders `aggrega.icns` from `assets/aggrega.svg`, ad-hoc signs the bundle and packs it, with an `/Applications` link, into a compressed disk image with `hdiutil`. For day-to-day development, plain `cargo run` works on macOS too; no extra native libraries are needed.
 
 ## 7. Data and reset
 

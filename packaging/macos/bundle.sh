@@ -1,28 +1,25 @@
 #!/bin/sh
-# Builds a universal (Apple silicon + Intel) Aggrega.app and zips it.
+# Builds an Apple silicon (arm64) Aggrega.app and packs it into a .dmg.
 #
 #   packaging/macos/bundle.sh
 #
 # The version comes from Cargo.toml (which the release workflow rewrites from the
 # tag), so Info.plist always matches the version compiled into the binary.
-# Needs both Rust targets (rustup target add aarch64-apple-darwin x86_64-apple-darwin)
-# and rsvg-convert (brew install librsvg) to render the icon.
-# Output: dist/Aggrega.app and dist/aggrega-<version>-macos-universal.zip
+# Needs the Rust target (rustup target add aarch64-apple-darwin) and rsvg-convert
+# (brew install librsvg) to render the icon.
+# Output: dist/Aggrega.app and dist/aggrega-<version>-macos-arm64.dmg
 set -eu
 cd "$(dirname "$0")/../.."
 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-targets="aarch64-apple-darwin x86_64-apple-darwin"
+target="aarch64-apple-darwin"
 app="dist/Aggrega.app"
 
-for t in $targets; do
-    cargo build --release --target "$t"
-done
+cargo build --release --target "$target"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-lipo -create -output "$app/Contents/MacOS/aggrega" \
-    $(for t in $targets; do echo "target/$t/release/aggrega"; done)
+cp "target/$target/release/aggrega" "$app/Contents/MacOS/aggrega"
 sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
 cp LICENSE assets/fonts/OFL.txt "$app/Contents/Resources/"
 
@@ -39,8 +36,13 @@ rm -rf "$iconset"
 # Unsigned builds still need an ad-hoc signature to launch on Apple silicon.
 codesign --force --deep --sign - "$app"
 
-# ditto keeps the bundle's permissions and metadata intact, unlike plain zip.
-zip="dist/aggrega-$version-macos-universal.zip"
-rm -f "$zip"
-ditto -c -k --keepParent "$app" "$zip"
-echo "$zip"
+# Disk image with the app next to an /Applications link, for drag-to-install.
+dmg="dist/aggrega-$version-macos-arm64.dmg"
+staging="dist/dmg"
+rm -rf "$staging" "$dmg"
+mkdir -p "$staging"
+ditto "$app" "$staging/Aggrega.app"
+ln -s /Applications "$staging/Applications"
+hdiutil create -volname Aggrega -srcfolder "$staging" -fs HFS+ -format UDZO -ov "$dmg"
+rm -rf "$staging"
+echo "$dmg"

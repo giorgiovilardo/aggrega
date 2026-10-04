@@ -69,7 +69,7 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    # Universal (Apple silicon + Intel) Aggrega.app, zipped. Unsigned apart from an
+    # Apple silicon (arm64) Aggrega.app in a .dmg. Unsigned apart from an
     # ad-hoc signature, so Gatekeeper asks on first launch (see docs/BUILDING.md).
     runs-on: macos-latest
     steps:
@@ -78,7 +78,7 @@ jobs:
       - name: Install build dependencies
         run: |
           rustup toolchain install stable --profile minimal \
-            --target aarch64-apple-darwin,x86_64-apple-darwin
+            --target aarch64-apple-darwin
           rustup default stable
           # rsvg-convert renders the .icns sizes from assets/aggrega.svg.
           brew install librsvg
@@ -112,5 +112,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           archive: false
-          path: dist/aggrega-${{ steps.version.outputs.version }}-macos-universal.zip
+          path: dist/aggrega-${{ steps.version.outputs.version }}-macos-arm64.dmg
           if-no-files-found: error

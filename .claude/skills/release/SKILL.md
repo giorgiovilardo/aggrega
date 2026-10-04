@@ -8,7 +8,7 @@ description: Cut a new Aggrega release by tagging vX.Y.Z, watching the Release b
 Pushing a tag matching `v[0-9]+.[0-9]+.[0-9]+*` triggers `.github/workflows/release.yml`. Both of its jobs rewrite the `[package]` version in `Cargo.toml` from the tag (that's what the sidebar shows), and each uploads a workflow **artifact**:
 
 - `build-arch` builds in an `archlinux` container and uploads `aggrega-<version>-x86_64.tar.gz`.
-- `build-macos` runs `packaging/macos/bundle.sh` on `macos-latest` and uploads `aggrega-<version>-macos-universal.zip` (a universal, ad-hoc signed `Aggrega.app`).
+- `build-macos` runs `packaging/macos/bundle.sh` on `macos-latest` and uploads `aggrega-<version>-macos-arm64.dmg` (an Apple silicon only, ad-hoc signed `Aggrega.app` in a disk image).
 
 It does not create a GitHub Release.
 

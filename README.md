@@ -60,7 +60,7 @@ cd packaging/arch && makepkg -si
 
 ## macOS
 
-Each release run builds a universal `Aggrega.app` (Apple silicon and Intel, macOS 11+), published as `aggrega-<version>-macos-universal.zip` in the run's artifacts. The app isn't notarized, so the first launch is blocked by Gatekeeper: click **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Aggrega.app`. See [docs/BUILDING.md](docs/BUILDING.md#6-macos) to build it yourself.
+Each release run builds `Aggrega.app` for Apple silicon Macs (M series, macOS 11+), published as the disk image `aggrega-<version>-macos-arm64.dmg` in the run's artifacts. Intel Macs aren't supported. The app isn't notarized, so the first launch is blocked by Gatekeeper: click **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Aggrega.app`. See [docs/BUILDING.md](docs/BUILDING.md#6-macos) to build it yourself.
 
 ## Where is my data?
 
