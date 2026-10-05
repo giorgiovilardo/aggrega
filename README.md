@@ -58,6 +58,16 @@ To install it as a proper package, with a launcher entry and icon:
 cd packaging/arch && makepkg -si
 ```
 
+If **Settings → Sync** can't find or reach the other computer, a firewall is probably blocking it. Some Arch-based distros, such as CachyOS, turn on `ufw` by default. Sync needs UDP 47811 (discovery) and TCP 47812 (transfer) open:
+
+```bash
+sudo ufw allow 47811/udp && sudo ufw allow 47812/tcp
+# or, with firewalld:
+sudo firewall-cmd --permanent --add-port=47811/udp --add-port=47812/tcp && sudo firewall-cmd --reload
+```
+
+If you only open TCP 47812, you can still sync by typing the other computer's address.
+
 [docs/BUILDING.md](docs/BUILDING.md) has the full build, run, test and packaging guide, plus troubleshooting.
 
 ## macOS
