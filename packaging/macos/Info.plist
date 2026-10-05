@@ -28,6 +28,8 @@
 	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Aggrega looks for other computers running Aggrega on your network while Settings › Sync is open, so you can move your sources and articles between them.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
 </dict>

@@ -2,6 +2,7 @@ import { AboutSlint, ScrollView } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
 import { GhostButton, IconButton, PrimaryButton } from "widgets.slint";
 import { DialogHeader, Modal } from "dialogs.slint";
+import { SyncPeer } from "types.slint";
 
 // One entry in the settings rail, styled like a sidebar row.
 component SettingsTab inherits Rectangle {
@@ -243,6 +244,197 @@ component TransferPane inherits VerticalLayout {
     }
 }
 
+// One copy of Aggrega found on the network, with a button to pull from it.
+component PeerRow inherits VerticalLayout {
+    in property <SyncPeer> peer;
+    in property <bool> enabled;
+    callback pull(string);
+
+    HorizontalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 14px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: Icons.sync;
+                width: 18px;
+                height: 18px;
+                colorize: Theme.accent;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.peer.name;
+                overflow: elide;
+                font-family: Fonts.sans-bold;
+                font-weight: 700;
+                font-size: 14px;
+                color: Theme.ink;
+            }
+            Text {
+                text: root.peer.address;
+                font-family: Fonts.sans;
+                font-size: 12.5px;
+                color: Theme.text-muted;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            GhostButton {
+                text: "Pull from here";
+                enabled: root.enabled;
+                accessible-label: "Pull from " + root.peer.name;
+                clicked => { root.pull(root.peer.target); }
+            }
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: Theme.rule;
+    }
+}
+
+// Pulling everything from another computer on the same network.
+component SyncPane inherits VerticalLayout {
+    in property <[SyncPeer]> peers;
+    // "Name · 192.168.1.5": how other computers see this one.
+    in property <string> device;
+    in property <bool> busy;
+    in property <string> note;
+    in property <bool> note-error;
+    callback connect(string);
+
+    function submit() {
+        if (!root.busy && address.text != "") {
+            root.connect(address.text);
+        }
+    }
+
+    padding: 40px;
+    padding-top: 38px;
+    spacing: 18px;
+    alignment: start;
+
+    DialogHeader {
+        kicker: "Sync";
+        title: "Bring your edition over";
+        subtitle: "Open this tab on another computer running Aggrega on the same network, then pull its sources, articles and reading progress here. Everything on this computer is replaced; your theme stays.";
+        subtitle-color: Theme.text-body;
+    }
+
+    VerticalLayout {
+        Rectangle {
+            height: 1px;
+            background: Theme.rule;
+        }
+        FactRow {
+            label: "This computer";
+            value: root.device;
+        }
+    }
+
+    VerticalLayout {
+        padding-top: 8px;
+        spacing: 6px;
+        SectionKicker {
+            text: "ON THIS NETWORK";
+        }
+        VerticalLayout {
+            Rectangle {
+                height: 1px;
+                background: Theme.rule;
+            }
+            for peer in root.peers: PeerRow {
+                peer: peer;
+                enabled: !root.busy;
+                pull(target) => { root.connect(target); }
+            }
+            if root.peers.length == 0: VerticalLayout {
+                padding-top: 12px;
+                CreditNote {
+                    text: "Looking for other computers… Open Settings › Sync on the other one too.";
+                    font-italic: true;
+                    color: Theme.text-muted;
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding-top: 8px;
+        spacing: 10px;
+        SectionKicker {
+            text: "OR ENTER ITS ADDRESS";
+        }
+        HorizontalLayout {
+            spacing: 10px;
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 40px;
+                border-radius: 4px;
+                background: Theme.input;
+                border-width: 1px;
+                border-color: address.has-focus ? Theme.ink : Theme.rule;
+                animate border-color { duration: 160ms; }
+
+                Text {
+                    x: 14px;
+                    text: "e.g. 192.168.1.5";
+                    vertical-alignment: center;
+                    color: Theme.text-faint;
+                    font-family: Fonts.serif;
+                    font-italic: true;
+                    font-size: 15px;
+                    visible: address.text == "";
+                }
+                address := TextInput {
+                    x: 14px;
+                    width: parent.width - 28px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    single-line: true;
+                    accessible-label: "Address of the other computer";
+                    font-family: Fonts.serif;
+                    font-size: 15px;
+                    color: Theme.ink;
+                    selection-background-color: Theme.accent-soft;
+                    selection-foreground-color: Theme.ink;
+                    enabled: !root.busy;
+                    accepted => { root.submit(); }
+                }
+            }
+            PrimaryButton {
+                text: "Connect";
+                enabled: !root.busy && address.text != "";
+                clicked => { root.submit(); }
+            }
+        }
+    }
+
+    if root.note != "": HorizontalLayout {
+        spacing: 8px;
+        if root.note-error: Image {
+            source: Icons.alert;
+            width: 15px;
+            height: 15px;
+            colorize: Theme.danger;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.note;
+            wrap: word-wrap;
+            font-family: Fonts.sans-semibold;
+            font-weight: 600;
+            font-size: 13px;
+            color: root.note-error ? Theme.danger : Theme.text-muted;
+        }
+    }
+}
+
 component AboutPane inherits VerticalLayout {
     in property <string> version;
     in property <string> repository;
@@ -305,7 +497,7 @@ component AboutPane inherits VerticalLayout {
         height: 4px;
     }
     Text {
-        text: "A fast, lightweight feed reader for RSS, Atom and JSON Feed. Everything stays on this computer: no account, no cloud, no tracking. Aggrega only goes online to fetch your sources, their pictures and the articles you open.";
+        text: "A fast, lightweight feed reader for RSS, Atom and JSON Feed. Everything stays on this computer: no account, no cloud, no tracking. Aggrega only goes online to fetch your sources, their pictures and the articles you open, and, while the Sync tab is open, to talk to other copies of Aggrega on your network.";
         wrap: word-wrap;
         font-family: Fonts.serif;
         font-size: 15.5px;
@@ -415,8 +607,14 @@ export component SettingsDialog inherits Rectangle {
     in property <string> thumbs-path;
     in property <bool> has-feeds;
     in property <bool> importing;
+    in property <[SyncPeer]> sync-peers;
+    in property <string> sync-device;
+    in property <bool> sync-busy;
+    in property <string> sync-note;
+    in property <bool> sync-note-error;
     callback closed();
     callback import-sources();
+    callback sync-connect(string);
     callback export-sources();
     callback open-link(string);
     callback open-data-folder(bool);
@@ -487,10 +685,16 @@ export component SettingsDialog inherits Rectangle {
                         clicked => { root.tab = 0; }
                     }
                     SettingsTab {
-                        label: "About";
-                        icon: Icons.info;
+                        label: "Sync";
+                        icon: Icons.sync;
                         selected: root.tab == 1;
                         clicked => { root.tab = 1; }
+                    }
+                    SettingsTab {
+                        label: "About";
+                        icon: Icons.info;
+                        selected: root.tab == 2;
+                        clicked => { root.tab = 2; }
                     }
                 }
             }
@@ -501,7 +705,7 @@ export component SettingsDialog inherits Rectangle {
 
                 ScrollView {
                     content-width: self.visible-width;
-                    content-height: max(self.visible-height, root.tab == 0 ? transfer-pane.preferred-height : about-pane.preferred-height);
+                    content-height: max(self.visible-height, root.tab == 0 ? transfer-pane.preferred-height : root.tab == 1 ? sync-pane.preferred-height : about-pane.preferred-height);
 
                     transfer-pane := TransferPane {
                         visible: root.tab == 0;
@@ -511,8 +715,18 @@ export component SettingsDialog inherits Rectangle {
                         import-sources => { root.import-sources(); }
                         export-sources => { root.export-sources(); }
                     }
-                    about-pane := AboutPane {
+                    sync-pane := SyncPane {
                         visible: root.tab == 1;
+                        width: parent.width;
+                        peers: root.sync-peers;
+                        device: root.sync-device;
+                        busy: root.sync-busy;
+                        note: root.sync-note;
+                        note-error: root.sync-note-error;
+                        connect(address) => { root.sync-connect(address); }
+                    }
+                    about-pane := AboutPane {
+                        visible: root.tab == 2;
                         width: parent.width;
                         version: root.version;
                         repository: root.repository;

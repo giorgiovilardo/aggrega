@@ -9,6 +9,7 @@ mod html;
 mod opml;
 mod pool;
 mod reader;
+mod sync;
 mod text;
 mod thumbs;
 
@@ -57,6 +58,9 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_import_sources(|| with_app(|a| a.import_sources()));
     ui.on_export_sources(|| with_app(|a| a.export_sources()));
     ui.on_theme_changed(|dark| with_app(|a| a.save_theme(dark)));
+    ui.on_sync_active(|on| with_app(|a| a.sync_active(on)));
+    ui.on_sync_connect(|address| with_app(|a| a.sync_connect(address)));
+    ui.on_sync_confirmed(|| with_app(|a| a.sync_confirmed()));
 
     // Custom title bar: minimise/maximise are handled in Slint, closing here.
     let weak = ui.as_weak();

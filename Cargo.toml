@@ -21,7 +21,7 @@ open = "5"
 # portal over D-Bus (libdbus is loaded at run time, with zenity as a fallback):
 # no GTK, no async runtime.
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 ureq = "3"
 url = "2"
 

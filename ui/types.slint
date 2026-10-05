@@ -47,3 +47,12 @@ export struct ReaderInfo {
     read: bool,
     lead: image,
 }
+
+// Another copy of Aggrega found on the network (Settings › Sync).
+export struct SyncPeer {
+    name: string,
+    // As shown, e.g. "192.168.1.5".
+    address: string,
+    // What to connect to, e.g. "192.168.1.5:47812".
+    target: string,
+}

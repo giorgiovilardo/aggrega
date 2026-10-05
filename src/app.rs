@@ -4,6 +4,7 @@
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -11,11 +12,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::db::{RefreshSummary, Store};
+use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
 use crate::opml::{self, Source};
 use crate::reader::{self, Block};
 use crate::{
-    AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, fetch, pool, text, thumbs,
+    AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, SyncPeer, fetch, pool,
+    sync, text, thumbs,
 };
 
 /// How many articles the list shows at most (newest first).
@@ -111,6 +113,17 @@ pub struct App {
     reader_link: RefCell<String>,
     reader_lead: RefCell<Option<String>>,
     reader_len: Cell<usize>,
+    sync_config: RefCell<sync::Config>,
+    /// Discovery and serving, while the Sync tab is open.
+    sync: RefCell<Option<sync::Session>>,
+    /// Bumped whenever the Sync tab opens or closes; results from an older
+    /// visit are dropped.
+    sync_gen: Cell<u64>,
+    sync_peers: Rc<VecModel<SyncPeer>>,
+    /// The computer the confirmation dialog asks about, and its name.
+    sync_pending: RefCell<Option<(SocketAddr, String)>>,
+    /// A pull is replacing the database.
+    pulling: Cell<bool>,
 }
 
 impl App {
@@ -120,6 +133,8 @@ impl App {
         let articles = Rc::new(VecModel::default());
         let feeds = Rc::new(VecModel::default());
         let reader_blocks = Rc::new(VecModel::default());
+        let sync_peers = Rc::new(VecModel::default());
+        ui.set_sync_peers(ModelRc::from(sync_peers.clone()));
         ui.set_articles(ModelRc::from(articles.clone()));
         ui.set_feeds(ModelRc::from(feeds.clone()));
         ui.set_reader_blocks(ModelRc::from(reader_blocks.clone()));
@@ -147,6 +162,12 @@ impl App {
             reader_link: RefCell::default(),
             reader_lead: RefCell::default(),
             reader_len: Cell::new(0),
+            sync_config: RefCell::default(),
+            sync: RefCell::default(),
+            sync_gen: Cell::new(0),
+            sync_peers,
+            sync_pending: RefCell::default(),
+            pulling: Cell::new(false),
         });
         APP.with(|cell| {
             let _ = cell.set(app.clone());
@@ -371,7 +392,7 @@ impl App {
     // ---- actions -----------------------------------------------------------
 
     pub fn refresh(&self) {
-        if self.refreshing.get() {
+        if self.refreshing.get() || self.pulling.get() {
             return;
         }
         let jobs = match self.store.fetch_jobs() {
@@ -810,7 +831,7 @@ impl App {
 
     /// Asks for an OPML file and subscribes to the sources in it.
     pub fn import_sources(&self) {
-        if self.ui().get_importing() {
+        if self.ui().get_importing() || self.pulling.get() {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
@@ -905,6 +926,178 @@ impl App {
         Ok(sources.len())
     }
 
+    // ---- sync ----------------------------------------------------------------
+
+    /// Starts discovery and serving when the Sync tab comes on screen, and
+    /// stops both when it goes away (other tab, or Settings closed).
+    pub fn sync_active(&self, on: bool) {
+        self.sync_gen.set(self.sync_gen.get() + 1);
+        // Dropping the old session stops its threads.
+        self.sync.replace(None);
+        self.sync_pending.replace(None);
+        self.sync_peers.set_vec(Vec::new());
+        let ui = self.ui();
+        if !self.pulling.get() {
+            ui.set_sync_busy(false);
+            self.sync_note("", false);
+        }
+        if !on {
+            return;
+        }
+
+        let name = sync::device_name();
+        let gen_ = self.sync_gen.get();
+        let session = sync::Session::start(
+            &self.sync_config.borrow(),
+            self.paths.db.clone(),
+            name.clone(),
+            move |peers| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    with_app(|app| app.sync_peers_found(gen_, peers))
+                });
+            },
+        );
+        let device = match (sync::local_ip(), session.port) {
+            (Some(ip), Some(port)) => {
+                format!("{name}  ·  {}", sync::display_addr((ip, port).into()))
+            }
+            (None, _) => format!("{name}  ·  not connected to a network"),
+            (Some(ip), None) => format!("{name}  ·  {ip}"),
+        };
+        ui.set_sync_device(device.into());
+        if !session.problems.is_empty() && !self.pulling.get() {
+            self.sync_note(&session.problems.join(" "), true);
+        }
+        self.sync.replace(Some(session));
+    }
+
+    fn sync_peers_found(&self, gen_: u64, peers: Vec<sync::Peer>) {
+        if gen_ != self.sync_gen.get() {
+            return;
+        }
+        let items = peers
+            .into_iter()
+            .map(|p| SyncPeer {
+                name: p.name.into(),
+                address: sync::display_addr(p.addr).into(),
+                target: p.addr.to_string().into(),
+            })
+            .collect();
+        sync_model(&self.sync_peers, items);
+    }
+
+    fn sync_note(&self, note: &str, error: bool) {
+        let ui = self.ui();
+        ui.set_sync_note(note.into());
+        ui.set_sync_note_error(error);
+    }
+
+    /// Asks the computer at `address` what it has, then lets the user
+    /// confirm before anything is replaced.
+    pub fn sync_connect(&self, address: SharedString) {
+        let ui = self.ui();
+        if ui.get_sync_busy() {
+            return;
+        }
+        if self.refreshing.get() || ui.get_importing() {
+            return self.sync_note("Wait for Aggrega to finish updating, then try again.", true);
+        }
+        ui.set_sync_busy(true);
+        self.sync_note(&format!("Connecting to {address}…"), false);
+        let gen_ = self.sync_gen.get();
+        std::thread::spawn(move || {
+            let result = sync::resolve(&address)
+                .and_then(|addr| Ok((addr, sync::info(addr)?)))
+                .map_err(|e| format!("{e:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|app| app.sync_info_ready(gen_, result))
+            });
+        });
+    }
+
+    fn sync_info_ready(&self, gen_: u64, result: Result<(SocketAddr, sync::Remote), String>) {
+        if gen_ != self.sync_gen.get() {
+            return;
+        }
+        self.ui().set_sync_busy(false);
+        let (addr, remote) = match result {
+            Ok(r) => r,
+            Err(e) => return self.sync_note(&capitalize(&e), true),
+        };
+        if remote.schema > SCHEMA_VERSION {
+            return self.sync_note(
+                &format!(
+                    "{} runs a newer version of Aggrega. Update this one first.",
+                    remote.name
+                ),
+                true,
+            );
+        }
+        let ours = match self.store.stats() {
+            Ok(s) => s,
+            Err(e) => return self.report("Couldn't read this computer's sources", e),
+        };
+        self.sync_note("", false);
+        let detail = format!(
+            "Its {} will replace the {} on this computer. This can't be undone.",
+            describe(remote.stats, true),
+            describe(ours, false),
+        );
+        self.sync_pending.replace(Some((addr, remote.name.clone())));
+        self.ui().invoke_ask_sync(remote.name.into(), detail.into());
+    }
+
+    /// The user confirmed: replaces this computer's database with the one
+    /// asked about.
+    pub fn sync_confirmed(&self) {
+        let Some((addr, name)) = self.sync_pending.take() else {
+            return;
+        };
+        if self.refreshing.get() || self.ui().get_importing() || self.pulling.get() {
+            return self.sync_note("Wait for Aggrega to finish updating, then try again.", true);
+        }
+        self.pulling.set(true);
+        self.ui().set_sync_busy(true);
+        self.sync_note(&format!("Pulling everything from {name}…"), false);
+        let db = self.paths.db.clone();
+        std::thread::spawn(move || {
+            let result = sync::pull(addr, &db).map_err(|e| format!("{e:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|app| app.sync_pulled(name, result))
+            });
+        });
+    }
+
+    fn sync_pulled(&self, name: String, result: Result<Stats, String>) {
+        self.pulling.set(false);
+        let ui = self.ui();
+        ui.set_sync_busy(false);
+        let stats = match result {
+            Ok(s) => s,
+            Err(e) => {
+                let msg = format!("Couldn't pull from {name}: {e}");
+                self.sync_note(&msg, true);
+                return self.toast(msg);
+            }
+        };
+        // Everything on screen came from the old database.
+        ui.invoke_hide_reader();
+        ui.set_selected_feed(-1);
+        self.thumb_failed.borrow_mut().clear();
+        self.offline.set(false);
+        self.last_refresh.set(
+            self.store
+                .setting("last_refresh")
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse().ok()),
+        );
+        self.reload_all();
+        let msg = format!("Pulled {} from {name}", describe(stats, false));
+        self.sync_note(&msg, false);
+        self.toast(msg);
+    }
+
     pub fn save_theme(&self, dark: bool) {
         let _ = self
             .store
@@ -944,6 +1137,27 @@ impl ImportSummary {
 /// "1 source", "3 sources".
 fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
+/// "3 sources and 120 articles", optionally with "(12 unread)".
+fn describe(s: Stats, unread: bool) -> String {
+    let mut text = format!(
+        "{} and {}",
+        count(s.feeds as usize, "source"),
+        count(s.articles as usize, "article")
+    );
+    if unread && s.articles > 0 {
+        text += &format!(" ({} unread)", s.unread);
+    }
+    text
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Subscribes to `sources` in parallel (with feed discovery, like the Add
@@ -1054,12 +1268,22 @@ mod tests {
             .unwrap();
         let ui = AppWindow::new().unwrap();
         let app = setup(&ui, store, paths).unwrap();
+        // Sync never leaves this computer in tests.
+        app.sync_config.replace(loopback());
         app.reload_all();
         // Headless windows start at 0×0, where every element counts as clipped away.
         ui.window().set_size(slint::LogicalSize::new(1240., 820.));
         // Let the opening animation finish so key presses aren't swallowed by it.
         testing::mock_elapsed_time(Duration::from_secs(3));
         (ui, app, dir)
+    }
+
+    fn loopback() -> sync::Config {
+        sync::Config {
+            beacon_port: 0,
+            service: (std::net::Ipv4Addr::LOCALHOST, 0).into(),
+            announce_to: std::net::Ipv4Addr::LOCALHOST.into(),
+        }
     }
 
     fn resize(ui: &AppWindow, w: f32, h: f32) {
@@ -1351,6 +1575,154 @@ mod tests {
         button("Settings").invoke_accessible_default_action();
         button("Close settings").invoke_accessible_default_action();
         assert!(!ui.get_settings_open());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sync_runs_only_while_its_tab_is_open() {
+        let (ui, app, dir) = start("sync-tab");
+        let button = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label} button"))
+        };
+        // `changed` handlers run on the next pass of the event loop.
+        let running = || {
+            testing::mock_elapsed_time(Duration::from_millis(16));
+            app.sync.borrow().is_some()
+        };
+
+        button("Settings").invoke_accessible_default_action();
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert!(!running(), "not on the Import & export tab");
+
+        button("Sync").invoke_accessible_default_action();
+        assert!(running());
+        assert!(ui.get_sync_device().contains(&sync::device_name()));
+        assert_eq!(ui.get_sync_note(), "", "no problems on the loopback");
+
+        button("About").invoke_accessible_default_action();
+        assert!(!running(), "switching tabs stops it");
+
+        button("Sync").invoke_accessible_default_action();
+        assert!(running());
+        press(&ui, Key::Escape);
+        assert!(!ui.get_settings_open());
+        assert!(!running(), "closing Settings stops it");
+
+        // Settings reopens on the Sync tab, so it starts again.
+        button("Settings").invoke_accessible_default_action();
+        assert!(running());
+        button("Close settings").invoke_accessible_default_action();
+        assert!(!running());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pulling_asks_first_then_replaces_everything() {
+        let (ui, app, dir) = start("sync-pull");
+        let shows = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .is_some()
+        };
+        // Another computer, following two other sources.
+        let theirs = dir.join("theirs.db");
+        let other = Store::open(&theirs).unwrap();
+        for url in ["https://a.example/rss", "https://b.example/rss"] {
+            let fetched = Fetched {
+                title: url.into(),
+                site_url: None,
+                etag: None,
+                last_modified: None,
+                articles: vec![article(7, &[])],
+            };
+            other.add_feed(url, &fetched).unwrap();
+        }
+        let server = sync::Session::start(&loopback(), theirs, "Desk".into(), |_| {});
+        let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, server.port.unwrap()).into();
+
+        app.open_article(row_of(&app, "Story 1"));
+        assert!(ui.get_reader_open());
+        app.sync_active(true);
+        let gen_ = app.sync_gen.get();
+        // Results from an earlier visit to the tab are dropped.
+        app.sync_info_ready(gen_ - 1, Ok((addr, sync::info(addr).unwrap())));
+        assert!(app.sync_pending.borrow().is_none());
+
+        app.sync_info_ready(gen_, Ok((addr, sync::info(addr).unwrap())));
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert!(shows("Replace everything with “Desk”?"));
+        assert!(shows(
+            "Its 2 sources and 2 articles (2 unread) will replace the 1 source and 2 articles \
+             on this computer. This can't be undone."
+        ));
+        assert_eq!(app.store.stats().unwrap().feeds, 1, "nothing changes yet");
+
+        // What the worker does once "Replace" is pressed.
+        let stats = sync::pull(addr, &app.paths.db).unwrap();
+        app.sync_pulled("Desk".into(), Ok(stats));
+        let titles: Vec<_> = app.feeds.iter().map(|f| f.title.to_string()).collect();
+        assert_eq!(titles, ["https://a.example/rss", "https://b.example/rss"]);
+        assert_eq!(
+            ui.get_sync_note(),
+            "Pulled 2 sources and 2 articles from Desk"
+        );
+        assert!(!ui.get_sync_note_error());
+        assert!(
+            !ui.get_reader_open(),
+            "the reader showed an article that's gone"
+        );
+
+        app.sync_pulled("Desk".into(), Err("connection reset".into()));
+        assert!(ui.get_sync_note_error());
+        assert_eq!(app.feeds.row_count(), 2, "a failed pull changes nothing");
+        drop(server);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sync_explains_what_it_cannot_do() {
+        let (ui, app, dir) = start("sync-errors");
+        app.sync_active(true);
+        let gen_ = app.sync_gen.get();
+        app.sync_info_ready(gen_, Err("couldn't reach 10.0.0.9:47812".into()));
+        assert_eq!(ui.get_sync_note(), "Couldn't reach 10.0.0.9:47812");
+        assert!(ui.get_sync_note_error());
+
+        let newer = sync::Remote {
+            name: "Desk".into(),
+            schema: SCHEMA_VERSION + 1,
+            stats: Stats {
+                feeds: 1,
+                articles: 1,
+                unread: 1,
+            },
+        };
+        app.sync_info_ready(gen_, Ok(("127.0.0.1:9".parse().unwrap(), newer)));
+        assert!(ui.get_sync_note().contains("newer version"));
+        assert!(app.sync_pending.borrow().is_none(), "nothing to confirm");
+
+        // Pulling while a refresh writes to the database waits.
+        app.refreshing.set(true);
+        app.sync_connect("127.0.0.1".into());
+        assert!(!ui.get_sync_busy());
+        assert!(ui.get_sync_note().starts_with("Wait"));
+        app.refreshing.set(false);
+
+        app.sync_active(false);
+        assert_eq!(ui.get_sync_note(), "", "leaving the tab clears it");
+        assert_eq!(
+            describe(
+                Stats {
+                    feeds: 1,
+                    articles: 0,
+                    unread: 0
+                },
+                true
+            ),
+            "1 source and 0 articles"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -3,14 +3,15 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
-use rusqlite::{Connection, OptionalExtension, params};
+use anyhow::{Context, Result, bail};
+use rusqlite::backup::Backup;
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::feed::{FeedJob, FetchResult, Fetched};
 use crate::fetch::is_unreachable;
 use crate::opml::Source;
 
-const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 2;
 
 pub struct Store {
     conn: Connection,
@@ -361,6 +362,80 @@ impl Store {
             params![feed],
         )?)
     }
+
+    // ---- sync -----------------------------------------------------------
+
+    pub fn stats(&self) -> Result<Stats> {
+        Ok(self.conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM feeds), COUNT(*), COALESCE(SUM(read = 0), 0)
+             FROM articles",
+            [],
+            |r| {
+                Ok(Stats {
+                    feeds: r.get(0)?,
+                    articles: r.get(1)?,
+                    unread: r.get(2)?,
+                })
+            },
+        )?)
+    }
+
+    /// Writes a consistent, compacted copy of the database to `path`, which
+    /// must not exist yet. Safe while other connections write.
+    pub fn snapshot_to(&self, path: &Path) -> Result<()> {
+        let path = path.to_str().context("snapshot path isn't valid UTF-8")?;
+        self.conn.execute("VACUUM INTO ?1", [path])?;
+        Ok(())
+    }
+
+    /// Replaces everything in this database with the snapshot at `path`
+    /// (from `snapshot_to`, possibly on another computer), keeping only this
+    /// computer's theme. Other connections see the new contents right away.
+    pub fn replace_with(&mut self, path: &Path) -> Result<()> {
+        let src = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let check: String = src
+            .query_row("PRAGMA quick_check", [], |r| r.get(0))
+            .context("not an Aggrega database")?;
+        if check != "ok" {
+            bail!("the received database is damaged ({check})");
+        }
+        let version: i32 = src.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version > SCHEMA_VERSION {
+            bail!("it was created by a newer version of Aggrega; update this one first");
+        }
+        let tables: i64 = src.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name IN ('feeds', 'articles', 'settings')",
+            [],
+            |r| r.get(0),
+        )?;
+        if version < 1 || tables != 3 {
+            bail!("not an Aggrega database");
+        }
+
+        let theme = self.setting("theme")?;
+        // One step copies every page under a single lock, so readers never
+        // see a half-replaced database.
+        Backup::new(&src, &mut self.conn)?.step(-1)?;
+        drop(src);
+        self.migrate()?;
+        match theme {
+            Some(t) => self.set_setting("theme", &t)?,
+            None => {
+                self.conn
+                    .execute("DELETE FROM settings WHERE key = 'theme'", [])?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What a database holds, to show before replacing one with another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stats {
+    pub feeds: i64,
+    pub articles: i64,
+    pub unread: i64,
 }
 
 fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result<usize> {
@@ -505,6 +580,77 @@ mod tests {
 
         store.remove_feed(id)?;
         assert!(store.articles(None, false, 10)?.is_empty());
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn replaces_everything_from_a_snapshot() -> Result<()> {
+        let dir = temp_dir("replace");
+        let theirs = Store::open(&dir.join("theirs.db"))?;
+        let (feed, _) = theirs.add_feed("https://x.org/rss", &sample(3))?;
+        let first = theirs.articles(Some(feed), false, 1)?[0].id;
+        theirs.set_read(first, true)?;
+        theirs.set_setting("theme", "dark")?;
+        theirs.set_setting("last_refresh", "123")?;
+        assert_eq!(
+            theirs.stats()?,
+            Stats {
+                feeds: 1,
+                articles: 3,
+                unread: 2
+            }
+        );
+        let snapshot = dir.join("snapshot.db");
+        theirs.snapshot_to(&snapshot)?;
+
+        let mut ours = Store::open(&dir.join("ours.db"))?;
+        ours.add_feed("https://y.org/feed", &sample(5))?;
+        ours.set_setting("theme", "light")?;
+        // Another connection, like the UI thread's, sees the new contents.
+        let ui = Store::open(&dir.join("ours.db"))?;
+        ours.replace_with(&snapshot)?;
+        assert_eq!(ui.stats()?, theirs.stats()?);
+        assert_eq!(ui.sources()?, theirs.sources()?);
+        assert_eq!(ui.setting("last_refresh")?.as_deref(), Some("123"));
+        assert_eq!(
+            ui.setting("theme")?.as_deref(),
+            Some("light"),
+            "theme stays"
+        );
+        let mode: String = ui.conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
+        assert_eq!(mode, "wal");
+        // Still writable through either connection.
+        ui.mark_all_read(None)?;
+        assert_eq!(ours.stats()?.unread, 0);
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_snapshots_it_cannot_use() -> Result<()> {
+        let dir = temp_dir("refuse");
+        let mut ours = Store::open(&dir.join("ours.db"))?;
+        ours.add_feed("https://y.org/feed", &sample(2))?;
+        let before = ours.stats()?;
+
+        let junk = dir.join("junk.db");
+        std::fs::write(&junk, b"definitely not sqlite, just some bytes here")?;
+        assert!(ours.replace_with(&junk).is_err());
+
+        let newer = dir.join("newer.db");
+        Store::open(&newer)?
+            .conn
+            .execute_batch("PRAGMA user_version = 99")?;
+        let err = ours.replace_with(&newer).unwrap_err().to_string();
+        assert!(err.contains("newer version"), "{err}");
+
+        let other = dir.join("other.db");
+        Connection::open(&other)?
+            .execute_batch("CREATE TABLE notes (x); PRAGMA user_version = 1;")?;
+        assert!(ours.replace_with(&other).is_err());
+
+        assert_eq!(ours.stats()?, before, "nothing was touched");
         std::fs::remove_dir_all(&dir)?;
         Ok(())
     }

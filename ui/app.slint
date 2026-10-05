@@ -1,14 +1,14 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
-import { ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo } from "types.slint";
+import { ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo, SyncPeer } from "types.slint";
 import { EmptyState, IconButton, MacWindowControls, Tabs, WindowControls } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { ArticleCard } from "article-card.slint";
-import { AddSourceDialog, ConfirmRemoveDialog } from "dialogs.slint";
+import { AddSourceDialog, ConfirmRemoveDialog, ConfirmSyncDialog } from "dialogs.slint";
 import { ReaderView } from "reader.slint";
 import { SettingsDialog } from "settings.slint";
 
-export { Theme, ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo }
+export { Theme, ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo, SyncPeer }
 
 global Motion {
     // Progress of `t` through the window [a, b], clamped to 0..1.
@@ -56,6 +56,13 @@ export component AppWindow inherits Window {
     // An OPML import is subscribing in the background.
     in property <bool> importing;
     in-out property <string> add-error;
+    // Settings › Sync: copies of Aggrega found nearby, how this one shows up,
+    // and what's happening (or what went wrong).
+    in property <[SyncPeer]> sync-peers;
+    in property <string> sync-device;
+    in property <bool> sync-busy;
+    in property <string> sync-note;
+    in property <bool> sync-note-error;
 
     // Reader view: the open article and its content blocks.
     in-out property <bool> reader-open: false;
@@ -70,6 +77,8 @@ export component AppWindow inherits Window {
     out property <length> column-width: main.column;
     out property <length> reader-column-width: reader-view.column;
     out property <bool> settings-open: settings-dialog.shown;
+    // Discovery and serving only run while the Sync tab is on screen.
+    out property <bool> sync-open: settings-dialog.shown && settings-dialog.tab == 1;
 
     callback refresh();
     callback open-article(int);
@@ -91,6 +100,13 @@ export component AppWindow inherits Window {
     // OPML: pick a file to follow its sources, or save them all to one.
     callback import-sources();
     callback export-sources();
+    // Sync: start or stop discovery, ask another computer what it has, and
+    // pull it once the user confirmed.
+    callback sync-active(bool);
+    callback sync-connect(string);
+    callback sync-confirmed();
+
+    changed sync-open => { root.sync-active(self.sync-open); }
 
     // `minimized` / `maximized` are built-in Window properties, kept in sync
     // with the real window state by Slint.
@@ -115,11 +131,16 @@ export component AppWindow inherits Window {
         keys.focus();
     }
 
-    function hide-reader() {
+    public function hide-reader() {
         if (self.reader-open) {
             self.reader-open = false;
             self.close-reader();
         }
+    }
+
+    // Called from Rust with what the other computer would send.
+    public function ask-sync(name: string, detail: string) {
+        sync-confirm.ask(name, detail);
     }
 
     public function close-add-dialog() {
@@ -169,6 +190,10 @@ export component AppWindow inherits Window {
             // The settings modal doesn't take focus; keep keys from reaching
             // the list or reader underneath it.
             if (settings-dialog.shown) {
+                if (event.text == Key.Escape && sync-confirm.shown) {
+                    sync-confirm.close();
+                    return accept;
+                }
                 if (event.text == Key.Escape) {
                     settings-dialog.close();
                     return accept;
@@ -525,11 +550,22 @@ export component AppWindow inherits Window {
             thumbs-path: root.thumbs-path;
             has-feeds: root.has-feeds;
             importing: root.importing;
+            sync-peers: root.sync-peers;
+            sync-device: root.sync-device;
+            sync-busy: root.sync-busy;
+            sync-note: root.sync-note;
+            sync-note-error: root.sync-note-error;
             closed => { keys.focus(); }
+            sync-connect(address) => { root.sync-connect(address); }
             import-sources => { root.import-sources(); }
             export-sources => { root.export-sources(); }
             open-link(url) => { root.open-link(url); }
             open-data-folder(thumbs) => { root.open-data-folder(thumbs); }
+        }
+
+        // Above the settings modal it's opened from.
+        sync-confirm := ConfirmSyncDialog {
+            confirmed => { root.sync-confirmed(); }
         }
 
         // Opening sequence: a paper "front page" that sets the masthead and then

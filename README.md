@@ -11,10 +11,11 @@
 ## Features
 
 - **No login, local only.** Your subscriptions and read state live in a single SQLite file on your disk.
-- **No telemetry, tracking or analytics.** There is no telemetry, tracking or analytics code in Aggrega. The only network traffic is fetching the feeds, thumbnails and articles you asked for; nothing is reported anywhere.
+- **No telemetry, tracking or analytics.** There is no telemetry, tracking or analytics code in Aggrega. The only network traffic is fetching the feeds, thumbnails and articles you asked for, plus, only while **Settings → Sync** is open, talking to other copies of Aggrega on your local network. Nothing is reported anywhere.
 - **Unlimited sources.** RSS 0.9x/1.0/2.0, Atom and JSON Feed are all supported.
 - **Smart "Add source".** Paste a feed URL, or just a website such as `theverge.com`. Aggrega finds the feed from the page's `<link rel="alternate">` tags or from common paths like `/feed` and `/rss.xml`.
 - **OPML import and export.** Bring your subscriptions over from Feedly, Inoreader, NetNewsWire, Miniflux or any other reader: **Settings → Import & export**, or **Import from OPML** on the welcome screen. Folders are flattened, sources you already follow are skipped, and Aggrega tells you how many were added, skipped or couldn't be reached. Export writes every source to a standard OPML 2.0 file.
+- **Sync between computers.** Moving to another machine? Open **Settings → Sync** on both: each lists the other copies of Aggrega on the same network (or type the other computer's address, shown on its Sync tab). Pull from one and, after you confirm, its sources, articles and read state replace everything on this computer; your theme stays. It works between macOS and Linux. Nothing listens or announces itself unless the Sync tab is on screen, and the transfer is not encrypted, so use it on networks you trust.
 - **Newest posts first.** The list merges every source into one feed sorted by date. You can also focus on a single source from the sidebar.
 - **Works offline.** Everything you've downloaded, including stories and thumbnails, stays readable without a connection. When no source can be reached, Aggrega says it's offline instead of flagging your sources as broken, and it retries on the next refresh.
 - **Refreshes on launch and on demand.** Cached articles show up immediately, and fresh ones are fetched in parallel in the background. Aggrega sends conditional requests (ETag / Last-Modified), so feeds that haven't changed cost almost nothing.
@@ -94,6 +95,7 @@ aggrega/
 │   ├── reader.rs       # reader view: HTML → text blocks, article extraction
 │   ├── db.rs           # SQLite storage
 │   ├── opml.rs         # OPML import (parsing) and export (writing)
+│   ├── sync.rs         # LAN sync: UDP beacon discovery, TCP snapshot transfer
 │   ├── thumbs.rs       # thumbnail download/resize/disk cache, reader pictures
 │   └── text.rs         # truncation, relative dates, avatar colours
 ├── ui/
@@ -103,8 +105,8 @@ aggrega/
 │   ├── sidebar.slint   # sources list
 │   ├── article-card.slint
 │   ├── reader.slint    # in-app reader view
-│   ├── dialogs.slint   # add-source + remove-confirmation modals
-│   ├── settings.slint  # settings modal (tabbed: Import & export, About)
+│   ├── dialogs.slint   # add-source, remove and sync confirmation modals
+│   ├── settings.slint  # settings modal (tabbed: Import & export, Sync, About)
 │   └── icons/          # SVG icons
 ├── assets/
 │   ├── aggrega.svg     # app icon

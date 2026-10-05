@@ -181,5 +181,8 @@ Aggrega opens links with `xdg-open`. Check that a default browser is set: `xdg-s
 **Import… / Export… does nothing on Linux.**
 The file dialogs go through the XDG desktop portal over D-Bus. Install `xdg-desktop-portal` plus the backend for your desktop (`xdg-desktop-portal-gtk`, `-kde`, `-gnome`…), or `zenity`, which Aggrega falls back to when no portal answers.
 
+**Settings → Sync doesn't list the other computer.**
+Both need the Sync tab open, on the same network. Discovery uses UDP broadcast on port 47811, which guest and hotel Wi-Fi often block between devices; type the address shown on the other computer's Sync tab instead. Pulling uses TCP port 47812, so a firewall must let it in on the computer you pull *from*, e.g. `sudo ufw allow 47811/udp && sudo ufw allow 47812/tcp`. On macOS, allow Aggrega when it asks to find devices on your local network (or later under *System Settings → Privacy & Security → Local Network*) and to accept incoming connections.
+
 **`error: rustc 1.xx is not supported`.**
 Update the toolchain with `rustup update stable`. Aggrega uses Rust 2024 edition features and needs Rust 1.88 or newer.

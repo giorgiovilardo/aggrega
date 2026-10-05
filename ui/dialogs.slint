@@ -272,3 +272,55 @@ export component ConfirmRemoveDialog inherits Rectangle {
         }
     }
 }
+
+// Last chance before another computer's database replaces this one's.
+export component ConfirmSyncDialog inherits Rectangle {
+    callback confirmed();
+    callback closed();
+
+    out property <bool> shown: false;
+    property <string> name;
+    property <string> detail;
+
+    public function ask(name: string, detail: string) {
+        self.name = name;
+        self.detail = detail;
+        self.shown = true;
+    }
+
+    public function close() {
+        if (self.shown) {
+            self.shown = false;
+            self.closed();
+        }
+    }
+
+    Modal {
+        shown: root.shown;
+        card-width: 500px;
+        dismiss => { root.close(); }
+
+        DialogHeader {
+            kicker: "Sync";
+            title: "Replace everything with “" + root.name + "”?";
+            subtitle: root.detail;
+        }
+
+        HorizontalLayout {
+            padding-top: 10px;
+            spacing: 10px;
+            alignment: end;
+            GhostButton {
+                text: "Cancel";
+                clicked => { root.close(); }
+            }
+            PrimaryButton {
+                text: "Replace";
+                clicked => {
+                    root.close();
+                    root.confirmed();
+                }
+            }
+        }
+    }
+}
