@@ -15,6 +15,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Pinned so a new stable release doesn't change rust-cache's key and force a
+  # cold build (~7 min instead of ~1.5). Bump deliberately.
+  RUST_TOOLCHAIN: "1.99.0"
+  # Line tables keep test backtraces useful but shrink target/ (and the cache
+  # that has to be uploaded and restored) considerably.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
   test:
     # Pinned: the job runs in a container, so the host image only needs to be stable.
@@ -30,11 +38,15 @@ jobs:
             ttf-dejavu
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+        run: rustup toolchain install $RUST_TOOLCHAIN --profile minimal && rustup default $RUST_TOOLCHAIN
 
       - uses: actions/checkout@v7
 
+      # Only main saves: PRs restore main's cache, and per-PR copies (~1.3 GB
+      # each) would otherwise push main's out of the 10 GB repo limit.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # UI tests use Slint's headless testing backend, so no display is needed,
       # but font lookup needs at least one system font (hence ttf-dejavu).
@@ -56,12 +68,16 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
+          rustup toolchain install $RUST_TOOLCHAIN --profile minimal --component clippy,rustfmt
+          rustup default $RUST_TOOLCHAIN
 
       - uses: actions/checkout@v7
 
+      # Only main saves: PRs restore main's cache, and per-PR copies (~1.3 GB
+      # each) would otherwise push main's out of the 10 GB repo limit.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check formatting
         run: cargo fmt --check

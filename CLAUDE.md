@@ -16,7 +16,7 @@ cargo fmt --check && cargo clippy -- -D warnings   # lint (= make lint)
 AGGREGA_HOME=/tmp/agg cargo run   # throwaway profile (db + thumbs in one dir, any OS)
 ```
 
-CI (`.github/workflows/ci.yml`) runs `cargo test --locked` in an `archlinux` container on every branch push. It does not run fmt/clippy, so run `make lint` yourself. Pushing a `vX.Y.Z` tag triggers `release.yml`, which rewrites the `Cargo.toml` version from the tag and uploads a tarball artifact.
+CI (`.github/workflows/ci.yml`) runs `cargo test --locked` and `make lint`'s checks as parallel jobs in an `archlinux` container on pushes to main and on PRs. It pins the Rust toolchain (`RUST_TOOLCHAIN`) so the cache survives new stable releases, and only main saves the cache. Bump the pin on purpose. Pushing a `vX.Y.Z` tag triggers `release.yml`, which rewrites the `Cargo.toml` version from the tag and uploads a tarball artifact.
 
 ## Architecture
 
