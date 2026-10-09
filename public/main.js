@@ -1,5 +1,6 @@
 // Progressive enhancements only: the page reads fine without JavaScript.
-// No storage beyond the theme choice, no network requests.
+// No storage beyond the theme choice, no network requests. `LANG` and `t()`
+// come from i18n.js, loaded first.
 
 const root = document.documentElement;
 const dark = matchMedia("(prefers-color-scheme: dark)");
@@ -7,7 +8,7 @@ const dark = matchMedia("(prefers-color-scheme: dark)");
 // Today's date in the dateline, like the app's header.
 const dateline = document.querySelector("[data-today]");
 if (dateline) {
-  dateline.textContent = new Date().toLocaleDateString("en-US", {
+  dateline.textContent = new Date().toLocaleDateString(LANG === "it" ? "it-IT" : "en-US", {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -88,14 +89,14 @@ for (const button of document.querySelectorAll(".copy")) {
     const code = button.parentElement.querySelector("code").textContent;
     try {
       await navigator.clipboard.writeText(code);
-      button.textContent = "Copied";
+      button.textContent = t("copied", "Copied");
       button.classList.add("is-done");
       setTimeout(() => {
-        button.textContent = "Copy";
+        button.textContent = t("copy", "Copy");
         button.classList.remove("is-done");
       }, 1600);
     } catch {
-      button.textContent = "Select & copy";
+      button.textContent = t("copy.fallback", "Select & copy");
     }
   });
 }
