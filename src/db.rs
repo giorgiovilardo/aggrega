@@ -15,7 +15,7 @@ pub const SCHEMA_VERSION: i32 = 2;
 
 /// Settings that belong to this computer, kept when a sync pull replaces
 /// the database.
-const LOCAL_SETTINGS: [&str; 2] = ["theme", "refresh_interval"];
+const LOCAL_SETTINGS: [&str; 3] = ["theme", "refresh_interval", "language"];
 
 pub struct Store {
     conn: Connection,

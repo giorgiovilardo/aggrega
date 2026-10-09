@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::db::{SCHEMA_VERSION, Stats, Store};
+use crate::i18n::tr;
 
 /// Where beacons are sent and heard.
 pub const BEACON_PORT: u16 = 47811;
@@ -97,17 +98,20 @@ impl Session {
         let port = match serve(config.service, db, name.clone(), stop.clone()) {
             Ok(port) => Some(port),
             Err(e) => {
-                problems.push(format!("Other computers can't pull from this one: {e:#}"));
+                problems.push(tr!(
+                    "Other computers can't pull from this one: {}",
+                    format!("{e:#}")
+                ));
                 None
             }
         };
         match beacon(config, &name, port, stop.clone(), on_peers) {
             Ok(true) => {}
-            Ok(false) => problems.push(format!(
+            Ok(false) => problems.push(tr!(
                 "Can't look for other computers: port {} is in use. Enter an address instead.",
                 config.beacon_port
             )),
-            Err(e) => problems.push(format!("Can't look for other computers: {e:#}")),
+            Err(e) => problems.push(tr!("Can't look for other computers: {}", format!("{e:#}"))),
         }
         Session {
             stop,

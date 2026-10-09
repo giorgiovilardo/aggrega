@@ -1,0 +1,537 @@
+# Italian translation of Aggrega.
+#
+# Holds every interface string: the Slint ones (`@tr(…)` in ui/) are bundled
+# in at build time, the Rust ones (`tr!` / `trn!` in src/) are looked up by
+# src/i18n.rs. The i18n tests check that every marked string is here.
+msgid ""
+msgstr ""
+"Project-Id-Version: aggrega\n"
+"Language: it\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "All articles"
+msgstr "Tutti gli articoli"
+
+msgid "Unread"
+msgstr "Non letti"
+
+msgid "All"
+msgstr "Tutti"
+
+msgid "Mark all as read"
+msgstr "Segna tutto come letto"
+
+msgid "Refresh"
+msgstr "Aggiorna"
+
+msgid "First edition"
+msgstr "Prima edizione"
+
+msgid "Welcome to Aggrega"
+msgstr "Benvenuti in Aggrega"
+
+msgid "Follow blogs, newspapers and YouTube channels.\nEverything stays on this computer — no account, no cloud."
+msgstr "Segui blog, giornali e canali YouTube.\nTutto resta su questo computer — niente account, niente cloud."
+
+msgid "Add your first source"
+msgstr "Aggiungi la tua prima fonte"
+
+msgid "Importing…"
+msgstr "Importazione…"
+
+msgid "Import from OPML"
+msgstr "Importa da OPML"
+
+msgid "Stop the presses"
+msgstr "Fermate le rotative"
+
+msgid "That's the edition"
+msgstr "L'edizione è chiusa"
+
+msgid "Quiet news day"
+msgstr "Giornata tranquilla"
+
+msgid "Fetching the latest…"
+msgstr "Arrivano le ultime notizie…"
+
+msgid "You're all caught up"
+msgstr "Sei in pari"
+
+msgid "Nothing here yet"
+msgstr "Ancora niente qui"
+
+msgid "This only takes a moment."
+msgstr "Ci vuole solo un attimo."
+
+msgid "You've read everything. Time for a coffee."
+msgstr "Hai letto tutto. È l'ora di un caffè."
+
+msgid "Hit refresh to check your sources for new stories."
+msgstr "Premi Aggiorna per cercare nuove notizie nelle tue fonti."
+
+msgid "YOUR FEEDS · ONE EDITION"
+msgstr "I TUOI FEED · UN'EDIZIONE"
+
+msgid "LEAD STORY"
+msgstr "IN APERTURA"
+
+msgid "New source"
+msgstr "Nuova fonte"
+
+msgid "Add to your edition"
+msgstr "Aggiungi alla tua edizione"
+
+msgid "Paste an RSS, Atom or JSON feed — or just a website address. Aggrega will find the feed for you."
+msgstr "Incolla un feed RSS, Atom o JSON — o anche solo l'indirizzo di un sito. Aggrega troverà il feed per te."
+
+msgid "e.g. theverge.com or https://example.com/feed.xml"
+msgstr "es. theverge.com o https://example.com/feed.xml"
+
+msgid "Cancel"
+msgstr "Annulla"
+
+msgid "Looking for the feed…"
+msgstr "Cerco il feed…"
+
+msgid "Add source"
+msgstr "Aggiungi fonte"
+
+msgid "Remove source"
+msgstr "Rimuovi fonte"
+
+msgid "Drop “{}”?"
+msgstr "Eliminare “{}”?"
+
+msgid "The source and all of its saved articles will be removed from Aggrega."
+msgstr "La fonte e tutti i suoi articoli salvati verranno rimossi da Aggrega."
+
+msgid "Keep it"
+msgstr "Tienila"
+
+msgid "Remove"
+msgstr "Rimuovi"
+
+msgid "Sync"
+msgstr "Sincronizzazione"
+
+msgid "Replace everything with “{}”?"
+msgstr "Sostituire tutto con “{}”?"
+
+msgid "Replace"
+msgstr "Sostituisci"
+
+msgid "Back to the list"
+msgstr "Torna all'elenco"
+
+msgid "BACK"
+msgstr "INDIETRO"
+
+msgid "Mark as unread"
+msgstr "Segna come da leggere"
+
+msgid "Mark as read"
+msgstr "Segna come letto"
+
+msgid "Open in browser"
+msgstr "Apri nel browser"
+
+msgid "Fetching the full story from {}…"
+msgstr "Scarico l'articolo completo da {}…"
+
+msgid "Read on {}"
+msgstr "Leggi su {}"
+
+msgid "Open original"
+msgstr "Apri l'originale"
+
+msgid "{}: {}"
+msgstr "{}: {}"
+
+msgid "Import & export"
+msgstr "Importa ed esporta"
+
+msgid "Take your edition with you"
+msgstr "Porta con te la tua edizione"
+
+msgid "Bring your sources over from another feed reader, or save them to a file as a backup."
+msgstr "Porta qui le tue fonti da un altro lettore di feed, o salvale in un file come backup."
+
+msgid "Follow every source in a file exported by another feed reader. Ones you already follow are skipped."
+msgstr "Segui tutte le fonti di un file esportato da un altro lettore di feed. Quelle che segui già vengono saltate."
+
+msgid "Import…"
+msgstr "Importa…"
+
+msgid "Export as OPML"
+msgstr "Esporta in OPML"
+
+msgid "The standard subscription list that every feed reader can import."
+msgstr "L'elenco di iscrizioni standard che ogni lettore di feed sa importare."
+
+msgid "Export…"
+msgstr "Esporta…"
+
+msgid "Updates"
+msgstr "Aggiornamenti"
+
+msgid "Fresh stories, on their own"
+msgstr "Notizie fresche, da sole"
+
+msgid "While Aggrega is open, it checks your sources for new stories on its own. New ones join the list without interrupting what you're reading. Press F5 to refresh right away."
+msgstr "Mentre Aggrega è aperto, controlla da solo se le tue fonti hanno nuove notizie. Quelle nuove si aggiungono all'elenco senza interrompere ciò che stai leggendo. Premi F5 per aggiornare subito."
+
+msgid "Refresh every"
+msgstr "Aggiorna ogni"
+
+msgid "From 5 minutes to 2 hours. Skipped while you're offline; refresh by hand to try again."
+msgstr "Da 5 minuti a 2 ore. Saltato quando sei offline; aggiorna a mano per riprovare."
+
+msgid "Refresh more often"
+msgstr "Aggiorna più spesso"
+
+msgid "{} min"
+msgstr "{} min"
+
+msgid "Refresh every {} minutes"
+msgstr "Aggiorna ogni {} minuti"
+
+msgid "Refresh less often"
+msgstr "Aggiorna meno spesso"
+
+msgid "Pull from here"
+msgstr "Scarica da qui"
+
+msgid "Pull from {}"
+msgstr "Scarica da {}"
+
+msgid "Bring your edition over"
+msgstr "Porta qui la tua edizione"
+
+msgid "Open this tab on another computer running Aggrega on the same network, then pull its sources, articles and reading progress here. Everything on this computer is replaced; your theme, language and refresh interval stay."
+msgstr "Apri questa scheda su un altro computer con Aggrega nella stessa rete, poi scarica qui le sue fonti, i suoi articoli e i progressi di lettura. Tutto ciò che c'è su questo computer viene sostituito; il tema, la lingua e l'intervallo di aggiornamento restano."
+
+msgid "This computer"
+msgstr "Questo computer"
+
+msgid "ON THIS NETWORK"
+msgstr "IN QUESTA RETE"
+
+msgid "Looking for other computers… Open Settings › Sync on the other one too."
+msgstr "Cerco altri computer… Apri Impostazioni › Sincronizzazione anche sull'altro."
+
+msgid "OR ENTER ITS ADDRESS"
+msgstr "OPPURE INSERISCI IL SUO INDIRIZZO"
+
+msgid "e.g. 192.168.1.5"
+msgstr "es. 192.168.1.5"
+
+msgid "Address of the other computer"
+msgstr "Indirizzo dell'altro computer"
+
+msgid "Connect"
+msgstr "Connetti"
+
+msgid "ABOUT"
+msgstr "INFORMAZIONI"
+
+msgid "Aggrega icon"
+msgstr "Icona di Aggrega"
+
+msgid "A fast, lightweight feed reader for RSS, Atom and JSON Feed. Everything stays on this computer: no account, no cloud, no tracking. Aggrega only goes online to fetch your sources, their pictures and the articles you open, and, while the Sync tab is open, to talk to other copies of Aggrega on your network."
+msgstr "Un lettore di feed veloce e leggero per RSS, Atom e JSON Feed. Tutto resta su questo computer: niente account, niente cloud, nessun tracciamento. Aggrega va online solo per scaricare le tue fonti, le loro immagini e gli articoli che apri e, mentre la scheda Sincronizzazione è aperta, per parlare con altre copie di Aggrega nella tua rete."
+
+msgid "Version"
+msgstr "Versione"
+
+msgid "Copyright"
+msgstr "Copyright"
+
+msgid "License"
+msgstr "Licenza"
+
+msgid "Read"
+msgstr "Leggi"
+
+msgid "Source code"
+msgstr "Codice sorgente"
+
+msgid "Open"
+msgstr "Apri"
+
+msgid "Issues"
+msgstr "Segnalazioni"
+
+msgid "Report a bug or suggest an idea"
+msgstr "Segnala un bug o proponi un'idea"
+
+msgid "YOUR DATA"
+msgstr "I TUOI DATI"
+
+msgid "Database"
+msgstr "Database"
+
+msgid "Show folder"
+msgstr "Mostra cartella"
+
+msgid "Thumbnails"
+msgstr "Miniature"
+
+msgid "Sources, articles and settings live in the database. The thumbnail cache is safe to delete; it refills as you browse."
+msgstr "Fonti, articoli e impostazioni stanno nel database. La cache delle miniature si può eliminare senza problemi: si riempie di nuovo mentre navighi."
+
+msgid "CREDITS"
+msgstr "RICONOSCIMENTI"
+
+msgid "The interface is built with Slint, © SixtyFPS GmbH, used under the Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0."
+msgstr "L'interfaccia è realizzata con Slint, © SixtyFPS GmbH, usato secondo la Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0."
+
+msgid "Source Serif 4, © 2014–2021 Adobe, with Reserved Font Name “Source”, and Libre Franklin, © 2020 The Libre Franklin Project Authors, are used under the SIL Open Font License 1.1, included with Aggrega as OFL.txt."
+msgstr "Source Serif 4, © 2014–2021 Adobe, con Reserved Font Name “Source”, e Libre Franklin, © 2020 The Libre Franklin Project Authors, sono usati secondo la SIL Open Font License 1.1, inclusa in Aggrega come OFL.txt."
+
+msgid "Storage is powered by SQLite, which is in the public domain. Other open-source libraries are used under their own licenses, including MIT, Apache 2.0, BSD, ISC, Zlib, MPL 2.0 and Unicode."
+msgstr "L'archiviazione si basa su SQLite, che è di pubblico dominio. Altre librerie open source sono usate secondo le rispettive licenze, tra cui MIT, Apache 2.0, BSD, ISC, Zlib, MPL 2.0 e Unicode."
+
+msgid "Settings"
+msgstr "Impostazioni"
+
+msgid "About"
+msgstr "Informazioni"
+
+msgid "Close settings"
+msgstr "Chiudi le impostazioni"
+
+msgid "SOURCES"
+msgstr "FONTI"
+
+msgid "No sources yet. Add a blog, a newspaper or a YouTube channel to start your edition."
+msgstr "Ancora nessuna fonte. Aggiungi un blog, un giornale o un canale YouTube per iniziare la tua edizione."
+
+msgid "Language"
+msgstr "Lingua"
+
+msgid "Close"
+msgstr "Chiudi"
+
+msgid "Minimize"
+msgstr "Riduci a icona"
+
+msgid "Restore"
+msgstr "Ripristina"
+
+msgid "Zoom"
+msgstr "Ingrandisci"
+
+msgid "Couldn't load sources"
+msgstr "Impossibile caricare le fonti"
+
+msgid "Couldn't load articles"
+msgstr "Impossibile caricare gli articoli"
+
+msgid "Refreshing your sources…"
+msgstr "Aggiorno le tue fonti…"
+
+msgid "All caught up"
+msgstr "Tutto letto"
+
+msgid "{} unread"
+msgstr "{} da leggere"
+
+msgid "{}  ·  offline, showing saved stories"
+msgstr "{}  ·  offline, ecco le notizie salvate"
+
+msgid "{}  ·  updated {}"
+msgstr "{}  ·  aggiornato {}"
+
+msgid "Couldn't start refresh"
+msgstr "Impossibile avviare l'aggiornamento"
+
+msgid "You're offline  ·  showing your saved stories"
+msgstr "Sei offline  ·  ecco le notizie salvate"
+
+msgid "You're up to date"
+msgstr "Tutto aggiornato"
+
+msgid "Refresh failed: {}"
+msgstr "Aggiornamento non riuscito: {}"
+
+msgid "Couldn't open the article"
+msgstr "Impossibile aprire l'articolo"
+
+msgid "This story has no text in its feed. Open the original to read it."
+msgstr "Questo articolo non ha testo nel suo feed. Apri l'originale per leggerlo."
+
+msgid "Couldn't find the story on its page. Open the original to read it."
+msgstr "Impossibile trovare l'articolo nella sua pagina. Apri l'originale per leggerlo."
+
+msgid "You're offline, so this is the summary from the feed."
+msgstr "Sei offline, quindi questo è il riassunto del feed."
+
+msgid "The full story couldn't be loaded, so this is the summary from the feed."
+msgstr "Impossibile caricare l'articolo completo, quindi questo è il riassunto del feed."
+
+msgid "Couldn't open the browser: {}"
+msgstr "Impossibile aprire il browser: {}"
+
+msgid "Couldn't open the folder: {}"
+msgstr "Impossibile aprire la cartella: {}"
+
+msgid "Couldn't save read state"
+msgstr "Impossibile salvare lo stato di lettura"
+
+msgid "Nothing left to read here"
+msgstr "Qui non c'è altro da leggere"
+
+msgid "Couldn't mark as read"
+msgstr "Impossibile segnare come letto"
+
+msgid "Couldn't remove source"
+msgstr "Impossibile rimuovere la fonte"
+
+msgid "Removed {}"
+msgstr "Fonte rimossa: {}"
+
+msgid "Import sources"
+msgstr "Importa fonti"
+
+msgid "Couldn't import"
+msgstr "Impossibile importare"
+
+msgid "No sources found in that file"
+msgstr "Nessuna fonte trovata in quel file"
+
+msgid "Import failed: {}"
+msgstr "Importazione non riuscita: {}"
+
+msgid "Export sources"
+msgstr "Esporta fonti"
+
+msgid "Couldn't export"
+msgstr "Impossibile esportare"
+
+msgid "{}  ·  not connected to a network"
+msgstr "{}  ·  non connesso a una rete"
+
+msgid "Wait for Aggrega to finish updating, then try again."
+msgstr "Attendi che Aggrega finisca di aggiornare, poi riprova."
+
+msgid "Connecting to {}…"
+msgstr "Connessione a {}…"
+
+msgid "{} runs a newer version of Aggrega. Update this one first."
+msgstr "{} usa una versione più recente di Aggrega. Aggiorna prima questa."
+
+msgid "Couldn't read this computer's sources"
+msgstr "Impossibile leggere le fonti di questo computer"
+
+msgid "Its {} will replace the {} on this computer. This can't be undone."
+msgstr "I suoi contenuti ({}) sostituiranno quelli di questo computer ({}). Non si può annullare."
+
+msgid "Pulling everything from {}…"
+msgstr "Scarico tutto da {}…"
+
+msgid "Couldn't pull from {}: {}"
+msgstr "Impossibile scaricare da {}: {}"
+
+msgid "Pulled {} from {}"
+msgstr "Scaricato da {1}: {0}"
+
+msgid "Couldn't save the refresh interval"
+msgstr "Impossibile salvare l'intervallo di aggiornamento"
+
+msgid "Couldn't save the language"
+msgstr "Impossibile salvare la lingua"
+
+msgid "You're offline  ·  nothing was imported"
+msgstr "Sei offline  ·  non è stato importato nulla"
+
+msgid "{} and {}"
+msgstr "{} e {}"
+
+msgid "Other computers can't pull from this one: {}"
+msgstr "Gli altri computer non possono scaricare da questo: {}"
+
+msgid "Can't look for other computers: port {} is in use. Enter an address instead."
+msgstr "Impossibile cercare altri computer: la porta {} è in uso. Inserisci un indirizzo."
+
+msgid "Can't look for other computers: {}"
+msgstr "Impossibile cercare altri computer: {}"
+
+msgid "just now"
+msgstr "adesso"
+
+msgid "{}m ago"
+msgstr "{} min fa"
+
+msgid "{}h ago"
+msgstr "{} h fa"
+
+msgid "{}d ago"
+msgstr "{} g fa"
+
+msgid "{n} source failed"
+msgid_plural "{n} sources failed"
+msgstr[0] "{n} fonte non riuscita"
+msgstr[1] "{n} fonti non riuscite"
+
+msgid "Marked {n} article as read"
+msgid_plural "Marked {n} articles as read"
+msgstr[0] "{n} articolo segnato come letto"
+msgstr[1] "{n} articoli segnati come letti"
+
+msgid "Added {}  ·  {n} article"
+msgid_plural "Added {}  ·  {n} articles"
+msgstr[0] "Fonte aggiunta: {}  ·  {n} articolo"
+msgstr[1] "Fonte aggiunta: {}  ·  {n} articoli"
+
+msgid "You already follow {n} source"
+msgid_plural "You already follow {n} sources"
+msgstr[0] "Segui già {n} fonte"
+msgstr[1] "Segui già {n} fonti"
+
+msgid "Importing {n} source…"
+msgid_plural "Importing {n} sources…"
+msgstr[0] "Importazione di {n} fonte…"
+msgstr[1] "Importazione di {n} fonti…"
+
+msgid "Exported {n} source to {}"
+msgid_plural "Exported {n} sources to {}"
+msgstr[0] "{n} fonte esportata in {}"
+msgstr[1] "{n} fonti esportate in {}"
+
+msgid "Imported {n} source"
+msgid_plural "Imported {n} sources"
+msgstr[0] "{n} fonte importata"
+msgstr[1] "{n} fonti importate"
+
+msgid "{n} already followed"
+msgid_plural "{n} already followed"
+msgstr[0] "{n} già seguita"
+msgstr[1] "{n} già seguite"
+
+msgid "{n} couldn't be added"
+msgid_plural "{n} couldn't be added"
+msgstr[0] "{n} non aggiunta"
+msgstr[1] "{n} non aggiunte"
+
+msgid "{n} new article"
+msgid_plural "{n} new articles"
+msgstr[0] "{n} nuovo articolo"
+msgstr[1] "{n} nuovi articoli"
+
+msgid "{n} source"
+msgid_plural "{n} sources"
+msgstr[0] "{n} fonte"
+msgstr[1] "{n} fonti"
+
+msgid "{n} article"
+msgid_plural "{n} articles"
+msgstr[0] "{n} articolo"
+msgstr[1] "{n} articoli"
+
+msgid "({n} unread)"
+msgid_plural "({n} unread)"
+msgstr[0] "({n} da leggere)"
+msgstr[1] "({n} da leggere)"

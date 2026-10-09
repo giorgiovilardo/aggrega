@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
+use crate::i18n::{self, Lang, tr, trn};
 use crate::opml::{self, Source};
 use crate::reader::{self, Block};
 use crate::{
@@ -159,6 +160,14 @@ impl App {
             .and_then(|v| v.parse().ok())
             .map_or(DEFAULT_REFRESH_MINUTES, clamp_refresh_minutes);
         ui.set_refresh_minutes(refresh_minutes as i32);
+        // English unless another language was picked.
+        let lang = store
+            .setting("language")?
+            .and_then(|code| Lang::from_code(&code))
+            .unwrap_or_default();
+        i18n::set_lang(lang);
+        ui.set_language(lang.code().into());
+        ui.set_today(i18n::long_date(chrono::Local::now()).into());
         let app = Rc::new(App {
             ui: ui.as_weak(),
             store,
@@ -213,7 +222,8 @@ impl App {
         self.ui().invoke_show_toast(msg.into());
     }
 
-    fn report(&self, what: &str, err: anyhow::Error) {
+    /// `what` is already translated; the error itself stays as it came.
+    fn report(&self, what: String, err: anyhow::Error) {
         eprintln!("aggrega: {what}: {err:#}");
         self.toast(format!("{what}: {err}"));
     }
@@ -228,7 +238,7 @@ impl App {
     pub fn reload_feeds(&self) {
         let feeds = match self.store.feeds() {
             Ok(f) => f,
-            Err(e) => return self.report("Couldn't load sources", e),
+            Err(e) => return self.report(tr!("Couldn't load sources"), e),
         };
         let ui = self.ui();
         let mut selected = ui.get_selected_feed();
@@ -240,7 +250,7 @@ impl App {
             .iter()
             .find(|f| f.id as i32 == selected)
             .map(|f| f.title.clone())
-            .unwrap_or_else(|| "All articles".into());
+            .unwrap_or_else(|| tr!("All articles"));
         ui.set_view_title(title.into());
         ui.set_total_unread(feeds.iter().map(|f| f.unread).sum::<i64>() as i32);
         ui.set_has_feeds(!feeds.is_empty());
@@ -268,7 +278,7 @@ impl App {
                 .articles(self.selected_feed(), ui.get_unread_only(), MAX_ARTICLES)
             {
                 Ok(r) => r,
-                Err(e) => return self.report("Couldn't load articles", e),
+                Err(e) => return self.report(tr!("Couldn't load articles"), e),
             };
         let now = now();
         let mut wanted = Vec::new();
@@ -319,7 +329,7 @@ impl App {
     fn update_status(&self) {
         let ui = self.ui();
         let status = if self.refreshing.get() {
-            "Refreshing your sources…".to_string()
+            tr!("Refreshing your sources…")
         } else {
             let unread = if ui.get_selected_feed() < 0 {
                 ui.get_total_unread()
@@ -331,12 +341,12 @@ impl App {
                     .map_or(0, |f| f.unread)
             };
             let unread = match unread {
-                0 => "All caught up".to_string(),
-                n => format!("{n} unread"),
+                0 => tr!("All caught up"),
+                n => tr!("{} unread", n),
             };
             match self.last_refresh.get() {
-                _ if self.offline.get() => format!("{unread}  ·  offline, showing saved stories"),
-                Some(t) => format!("{unread}  ·  updated {}", text::ago(t, now())),
+                _ if self.offline.get() => tr!("{}  ·  offline, showing saved stories", unread),
+                Some(t) => tr!("{}  ·  updated {}", unread, text::ago(t, now())),
                 None => unread,
             }
         };
@@ -433,7 +443,7 @@ impl App {
         let jobs = match self.store.fetch_jobs() {
             Ok(j) if !j.is_empty() => j,
             Ok(_) => return,
-            Err(e) => return self.report("Couldn't start refresh", e),
+            Err(e) => return self.report(tr!("Couldn't start refresh"), e),
         };
         self.background.set(background);
         self.set_refreshing(true);
@@ -478,24 +488,21 @@ impl App {
             }
             Err(_) if self.background.get() => {}
             Ok(_) if offline => {
-                self.toast("You're offline  ·  showing your saved stories");
+                self.toast(tr!("You're offline  ·  showing your saved stories"));
             }
             Ok(s) => {
                 let mut msg = match s.new_articles {
-                    0 => "You're up to date".to_string(),
+                    0 => tr!("You're up to date"),
                     n => new_articles(n),
                 };
                 let problems = s.failed + s.unreachable;
                 if problems > 0 {
-                    msg += &format!(
-                        "  ·  {} source{} failed",
-                        problems,
-                        if problems == 1 { "" } else { "s" }
-                    );
+                    msg += "  ·  ";
+                    msg += &trn!(problems, "{n} source failed", "{n} sources failed");
                 }
                 self.toast(msg);
             }
-            Err(e) => self.toast(format!("Refresh failed: {e}")),
+            Err(e) => self.toast(tr!("Refresh failed: {}", e)),
         }
     }
 
@@ -517,7 +524,7 @@ impl App {
         let article = match self.store.reader_article(id) {
             Ok(Some(a)) => a,
             Ok(None) => return,
-            Err(e) => return self.report("Couldn't open the article", e),
+            Err(e) => return self.report(tr!("Couldn't open the article"), e),
         };
         let ui = self.ui();
         let lead = article.image_url.clone();
@@ -545,9 +552,9 @@ impl App {
         ui.set_reader_loading(fetch_page);
         ui.set_reader_note(
             if !fetch_page && blocks.is_empty() {
-                "This story has no text in its feed. Open the original to read it."
+                tr!("This story has no text in its feed. Open the original to read it.")
             } else {
-                ""
+                String::new()
             }
             .into(),
         );
@@ -619,16 +626,18 @@ impl App {
                     let lead = self.reader_lead.borrow().clone();
                     self.set_reader_blocks(&reader::tidy(page, &title, lead.as_deref()));
                 }
-                ""
+                String::new()
             }
             Ok(_) if shown == 0 => {
-                "Couldn't find the story on its page. Open the original to read it."
+                tr!("Couldn't find the story on its page. Open the original to read it.")
             }
-            Ok(_) => "",
+            Ok(_) => String::new(),
             Err(e) if fetch::is_unreachable(&e) => {
-                "You're offline, so this is the summary from the feed."
+                tr!("You're offline, so this is the summary from the feed.")
             }
-            Err(_) => "The full story couldn't be loaded, so this is the summary from the feed.",
+            Err(_) => {
+                tr!("The full story couldn't be loaded, so this is the summary from the feed.")
+            }
         };
         if current {
             let ui = self.ui();
@@ -700,14 +709,14 @@ impl App {
             return;
         }
         if let Err(e) = open::that_detached(&link) {
-            self.toast(format!("Couldn't open the browser: {e}"));
+            self.toast(tr!("Couldn't open the browser: {}", e));
         }
     }
 
     /// Opens a link from the About tab in the browser.
     pub fn open_link(&self, url: SharedString) {
         if let Err(e) = open::that_detached(url.as_str()) {
-            self.toast(format!("Couldn't open the browser: {e}"));
+            self.toast(tr!("Couldn't open the browser: {}", e));
         }
     }
 
@@ -719,7 +728,7 @@ impl App {
             self.paths.db.parent().unwrap_or(&self.paths.db)
         };
         if let Err(e) = open::that_detached(dir) {
-            self.toast(format!("Couldn't open the folder: {e}"));
+            self.toast(tr!("Couldn't open the folder: {}", e));
         }
     }
 
@@ -737,7 +746,7 @@ impl App {
             Some(row) => self.set_read(row, read),
             None => {
                 if let Err(e) = self.store.set_read(id, read) {
-                    return self.report("Couldn't save read state", e);
+                    return self.report(tr!("Couldn't save read state"), e);
                 }
                 // Marked unread again after it left the Unread list: bring it back.
                 self.reload_all();
@@ -758,7 +767,7 @@ impl App {
             return;
         };
         if let Err(e) = self.store.set_read(item.id as i64, read) {
-            return self.report("Couldn't save read state", e);
+            return self.report(tr!("Couldn't save read state"), e);
         }
         item.read = read;
         // In the Unread view a freshly read story animates out of the list.
@@ -793,7 +802,7 @@ impl App {
 
     pub fn mark_all_read(&self) {
         match self.store.mark_all_read(self.selected_feed()) {
-            Ok(0) => self.toast("Nothing left to read here"),
+            Ok(0) => self.toast(tr!("Nothing left to read here")),
             Ok(n) => {
                 let leaving = self.ui().get_unread_only();
                 for i in 0..self.articles.row_count() {
@@ -809,12 +818,13 @@ impl App {
                         with_app(|a| a.remove_leaving(None))
                     });
                 }
-                self.toast(format!(
-                    "Marked {n} article{} as read",
-                    if n == 1 { "" } else { "s" }
+                self.toast(trn!(
+                    n,
+                    "Marked {n} article as read",
+                    "Marked {n} articles as read"
                 ));
             }
-            Err(e) => self.report("Couldn't mark as read", e),
+            Err(e) => self.report(tr!("Couldn't mark as read"), e),
         }
     }
 
@@ -846,7 +856,12 @@ impl App {
                 ui.invoke_close_add_dialog();
                 ui.set_selected_feed(id as i32);
                 self.reload_all();
-                self.toast(format!("Added {title}  ·  {n} articles"));
+                self.toast(trn!(
+                    n,
+                    "Added {}  ·  {n} article",
+                    "Added {}  ·  {n} articles",
+                    title
+                ));
             }
             Err(e) => {
                 let mut e = e;
@@ -866,10 +881,10 @@ impl App {
             .map(|f| f.title.to_string())
             .unwrap_or_default();
         if let Err(e) = self.store.remove_feed(id as i64) {
-            return self.report("Couldn't remove source", e);
+            return self.report(tr!("Couldn't remove source"), e);
         }
         self.reload_all();
-        self.toast(format!("Removed {title}"));
+        self.toast(tr!("Removed {}", title));
     }
 
     // ---- OPML import / export ----------------------------------------------
@@ -880,7 +895,7 @@ impl App {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .set_title("Import sources")
+            .set_title(tr!("Import sources"))
             .add_filter("OPML", &["opml", "xml"])
             .pick_file()
         else {
@@ -897,11 +912,11 @@ impl App {
             .and_then(|bytes| opml::parse(&String::from_utf8_lossy(&bytes)))
         {
             Ok(s) => s,
-            Err(e) => return self.report("Couldn't import", e),
+            Err(e) => return self.report(tr!("Couldn't import"), e),
         };
         let known: HashSet<String> = match self.store.sources() {
             Ok(s) => s.into_iter().map(|s| s.xml_url).collect(),
-            Err(e) => return self.report("Couldn't import", e),
+            Err(e) => return self.report(tr!("Couldn't import"), e),
         };
         let total = sources.len();
         let fresh: Vec<Source> = sources
@@ -914,13 +929,21 @@ impl App {
         let skipped = total - fresh.len();
         if fresh.is_empty() {
             return self.toast(match total {
-                0 => "No sources found in that file".to_string(),
-                n => format!("You already follow {}", count(n, "source")),
+                0 => tr!("No sources found in that file"),
+                n => trn!(
+                    n,
+                    "You already follow {n} source",
+                    "You already follow {n} sources"
+                ),
             });
         }
 
         self.ui().set_importing(true);
-        self.toast(format!("Importing {}…", count(fresh.len(), "source")));
+        self.toast(trn!(
+            fresh.len(),
+            "Importing {n} source…",
+            "Importing {n} sources…"
+        ));
         let agent = self.agent.clone();
         let db_path = self.paths.db.clone();
         std::thread::spawn(move || {
@@ -939,14 +962,14 @@ impl App {
         self.reload_all();
         match summary {
             Ok(s) => self.toast(s.message()),
-            Err(e) => self.toast(format!("Import failed: {e}")),
+            Err(e) => self.toast(tr!("Import failed: {}", e)),
         }
     }
 
     /// Asks where to save, then writes every source there as OPML.
     pub fn export_sources(&self) {
         let Some(path) = rfd::FileDialog::new()
-            .set_title("Export sources")
+            .set_title(tr!("Export sources"))
             .set_file_name("aggrega-sources.opml")
             .add_filter("OPML", &["opml"])
             .save_file()
@@ -956,9 +979,14 @@ impl App {
         match self.export_to(&path) {
             Ok(n) => {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                self.toast(format!("Exported {} to {name}", count(n, "source")));
+                self.toast(trn!(
+                    n,
+                    "Exported {n} source to {}",
+                    "Exported {n} sources to {}",
+                    name
+                ));
             }
-            Err(e) => self.report("Couldn't export", e),
+            Err(e) => self.report(tr!("Couldn't export"), e),
         }
     }
 
@@ -1006,7 +1034,7 @@ impl App {
             (Some(ip), Some(port)) => {
                 format!("{name}  ·  {}", sync::display_addr((ip, port).into()))
             }
-            (None, _) => format!("{name}  ·  not connected to a network"),
+            (None, _) => tr!("{}  ·  not connected to a network", name),
             (Some(ip), None) => format!("{name}  ·  {ip}"),
         };
         ui.set_sync_device(device.into());
@@ -1045,10 +1073,13 @@ impl App {
             return;
         }
         if self.refreshing.get() || ui.get_importing() {
-            return self.sync_note("Wait for Aggrega to finish updating, then try again.", true);
+            return self.sync_note(
+                &tr!("Wait for Aggrega to finish updating, then try again."),
+                true,
+            );
         }
         ui.set_sync_busy(true);
-        self.sync_note(&format!("Connecting to {address}…"), false);
+        self.sync_note(&tr!("Connecting to {}…", address), false);
         let gen_ = self.sync_gen.get();
         std::thread::spawn(move || {
             let result = sync::resolve(&address)
@@ -1071,7 +1102,7 @@ impl App {
         };
         if remote.schema > SCHEMA_VERSION {
             return self.sync_note(
-                &format!(
+                &tr!(
                     "{} runs a newer version of Aggrega. Update this one first.",
                     remote.name
                 ),
@@ -1080,10 +1111,10 @@ impl App {
         }
         let ours = match self.store.stats() {
             Ok(s) => s,
-            Err(e) => return self.report("Couldn't read this computer's sources", e),
+            Err(e) => return self.report(tr!("Couldn't read this computer's sources"), e),
         };
         self.sync_note("", false);
-        let detail = format!(
+        let detail = tr!(
             "Its {} will replace the {} on this computer. This can't be undone.",
             describe(remote.stats, true),
             describe(ours, false),
@@ -1099,11 +1130,14 @@ impl App {
             return;
         };
         if self.refreshing.get() || self.ui().get_importing() || self.pulling.get() {
-            return self.sync_note("Wait for Aggrega to finish updating, then try again.", true);
+            return self.sync_note(
+                &tr!("Wait for Aggrega to finish updating, then try again."),
+                true,
+            );
         }
         self.pulling.set(true);
         self.ui().set_sync_busy(true);
-        self.sync_note(&format!("Pulling everything from {name}…"), false);
+        self.sync_note(&tr!("Pulling everything from {}…", name), false);
         let db = self.paths.db.clone();
         std::thread::spawn(move || {
             let result = sync::pull(addr, &db).map_err(|e| format!("{e:#}"));
@@ -1120,7 +1154,7 @@ impl App {
         let stats = match result {
             Ok(s) => s,
             Err(e) => {
-                let msg = format!("Couldn't pull from {name}: {e}");
+                let msg = tr!("Couldn't pull from {}: {}", name, e);
                 self.sync_note(&msg, true);
                 return self.toast(msg);
             }
@@ -1138,7 +1172,7 @@ impl App {
                 .and_then(|v| v.parse().ok()),
         );
         self.reload_all();
-        let msg = format!("Pulled {} from {name}", describe(stats, false));
+        let msg = tr!("Pulled {} from {}", describe(stats, false), name);
         self.sync_note(&msg, false);
         self.toast(msg);
     }
@@ -1160,7 +1194,32 @@ impl App {
             .store
             .set_setting("refresh_interval", &next.to_string())
         {
-            self.report("Couldn't save the refresh interval", e);
+            self.report(tr!("Couldn't save the refresh interval"), e);
+        }
+    }
+
+    /// The language switch: applies `code` at once, everywhere, and saves it.
+    pub fn change_language(&self, code: SharedString) {
+        let Some(lang) = Lang::from_code(&code) else {
+            return;
+        };
+        i18n::set_lang(lang);
+        let ui = self.ui();
+        ui.set_language(lang.code().into());
+        ui.set_today(i18n::long_date(chrono::Local::now()).into());
+        // Text built in Rust, re-rendered in place so the list doesn't move:
+        // the view title, the status line and every row's date.
+        self.reload_feeds();
+        self.tick();
+        if let Some(id) = self.reader_id.get()
+            && let Ok(Some(article)) = self.store.reader_article(id)
+        {
+            let mut info = ui.get_reader();
+            info.time = text::ago(article.published, now()).into();
+            ui.set_reader(info);
+        }
+        if let Err(e) = self.store.set_setting("language", lang.code()) {
+            self.report(tr!("Couldn't save the language"), e);
         }
     }
 
@@ -1186,21 +1245,32 @@ struct ImportSummary {
 impl ImportSummary {
     fn message(&self) -> String {
         if self.added == 0 && self.failed == 0 && self.unreachable > 0 {
-            return "You're offline  ·  nothing was imported".into();
+            return tr!("You're offline  ·  nothing was imported");
         }
-        let mut parts = vec![format!("Imported {}", count(self.added, "source"))];
+        let mut parts = vec![trn!(
+            self.added,
+            "Imported {n} source",
+            "Imported {n} sources"
+        )];
         if self.skipped > 0 {
-            parts.push(format!("{} already followed", self.skipped));
+            parts.push(trn!(
+                self.skipped,
+                "{n} already followed",
+                "{n} already followed"
+            ));
         }
         let failed = self.failed + self.unreachable;
         if failed > 0 {
-            parts.push(format!("{failed} couldn't be added"));
+            parts.push(trn!(
+                failed,
+                "{n} couldn't be added",
+                "{n} couldn't be added"
+            ));
         }
         parts.join("  ·  ")
     }
 }
 
-/// "1 source", "3 sources".
 fn minutes(n: i64) -> Duration {
     Duration::from_secs(n as u64 * 60)
 }
@@ -1210,25 +1280,19 @@ fn clamp_refresh_minutes(n: i64) -> i64 {
 }
 
 fn new_articles(n: usize) -> String {
-    match n {
-        1 => "1 new article".into(),
-        n => format!("{n} new articles"),
-    }
-}
-
-fn count(n: usize, noun: &str) -> String {
-    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+    trn!(n, "{n} new article", "{n} new articles")
 }
 
 /// "3 sources and 120 articles", optionally with "(12 unread)".
 fn describe(s: Stats, unread: bool) -> String {
-    let mut text = format!(
+    let mut text = tr!(
         "{} and {}",
-        count(s.feeds as usize, "source"),
-        count(s.articles as usize, "article")
+        trn!(s.feeds, "{n} source", "{n} sources"),
+        trn!(s.articles, "{n} article", "{n} articles")
     );
     if unread && s.articles > 0 {
-        text += &format!(" ({} unread)", s.unread);
+        text += " ";
+        text += &trn!(s.unread, "({n} unread)", "({n} unread)");
     }
     text
 }
@@ -1987,5 +2051,61 @@ mod tests {
         assert_eq!(host_of("https://www.example.com/a/b"), "example.com");
         assert_eq!(host_of("https://blog.example.org/"), "blog.example.org");
         assert_eq!(host_of("not a link"), "");
+    }
+
+    #[test]
+    fn language_switch_applies_at_once_and_sticks() {
+        let (ui, app, dir) = start("language");
+        let button = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label} button"))
+        };
+        let shows = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .is_some()
+        };
+        assert_eq!(ui.get_language(), "en", "English by default");
+        app.open_article(row_of(&app, "Story 1"));
+
+        // Through the switch and its list, as a click would.
+        button("Language").invoke_accessible_default_action();
+        button("Italiano").invoke_accessible_default_action();
+        assert_eq!(ui.get_language(), "it");
+        // Slint's strings and the ones built in Rust switch together.
+        assert!(shows("Impostazioni") && !shows("Settings"));
+        assert!(shows("Lingua"));
+        assert_eq!(ui.get_view_title(), "Tutti gli articoli");
+        assert!(
+            ui.get_status_text().starts_with("1 da leggere"),
+            "{}",
+            ui.get_status_text()
+        );
+        assert_eq!(ui.get_today(), i18n::long_date(chrono::Local::now()));
+        assert!(
+            ui.get_today().contains(" 20"),
+            "Italian date: {}",
+            ui.get_today()
+        );
+        let row = app.articles.row_data(row_of(&app, "Story 1")).unwrap();
+        assert!(row.time.ends_with(" nov 2023"), "{}", row.time);
+        assert_eq!(
+            ui.get_reader().time,
+            row.time,
+            "the open article's date too"
+        );
+
+        // Remembered for next time.
+        drop(app);
+        let store = Store::open(&dir.join("aggrega.db")).unwrap();
+        assert_eq!(store.setting("language").unwrap().as_deref(), Some("it"));
+
+        with_app(|a| a.change_language("en".into()));
+        assert!(shows("Settings") && !shows("Impostazioni"));
+        assert_eq!(ui.get_view_title(), "All articles");
+        // Unknown codes are ignored.
+        with_app(|a| a.change_language("xx".into()));
+        assert_eq!(ui.get_language(), "en");
     }
 }

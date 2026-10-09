@@ -132,9 +132,9 @@ export component AddSourceDialog inherits Rectangle {
         dismiss => { root.close(); }
 
         DialogHeader {
-            kicker: "New source";
-            title: "Add to your edition";
-            subtitle: "Paste an RSS, Atom or JSON feed — or just a website address. Aggrega will find the feed for you.";
+            kicker: @tr("New source");
+            title: @tr("Add to your edition");
+            subtitle: @tr("Paste an RSS, Atom or JSON feed — or just a website address. Aggrega will find the feed for you.");
         }
 
         Rectangle {
@@ -160,7 +160,7 @@ export component AddSourceDialog inherits Rectangle {
                     horizontal-stretch: 1;
                     Text {
                         x: 0;
-                        text: "e.g. theverge.com or https://example.com/feed.xml";
+                        text: @tr("e.g. theverge.com or https://example.com/feed.xml");
                         color: Theme.text-faint;
                         font-family: Fonts.serif;
                         font-italic: true;
@@ -208,11 +208,11 @@ export component AddSourceDialog inherits Rectangle {
             spacing: 10px;
             alignment: end;
             GhostButton {
-                text: "Cancel";
+                text: @tr("Cancel");
                 clicked => { root.close(); }
             }
             PrimaryButton {
-                text: root.busy ? "Looking for the feed…" : "Add source";
+                text: root.busy ? @tr("Looking for the feed…") : @tr("Add source");
                 icon: Icons.plus;
                 has-icon: !root.busy;
                 enabled: !root.busy && input.text != "";
@@ -249,9 +249,9 @@ export component ConfirmRemoveDialog inherits Rectangle {
         dismiss => { root.close(); }
 
         DialogHeader {
-            kicker: "Remove source";
-            title: "Drop “" + root.name + "”?";
-            subtitle: "The source and all of its saved articles will be removed from Aggrega.";
+            kicker: @tr("Remove source");
+            title: @tr("Drop “{}”?", root.name);
+            subtitle: @tr("The source and all of its saved articles will be removed from Aggrega.");
         }
 
         HorizontalLayout {
@@ -259,11 +259,11 @@ export component ConfirmRemoveDialog inherits Rectangle {
             spacing: 10px;
             alignment: end;
             GhostButton {
-                text: "Keep it";
+                text: @tr("Keep it");
                 clicked => { root.close(); }
             }
             PrimaryButton {
-                text: "Remove";
+                text: @tr("Remove");
                 clicked => {
                     root.confirmed(root.feed-id);
                     root.close();
@@ -301,8 +301,8 @@ export component ConfirmSyncDialog inherits Rectangle {
         dismiss => { root.close(); }
 
         DialogHeader {
-            kicker: "Sync";
-            title: "Replace everything with “" + root.name + "”?";
+            kicker: @tr("Sync");
+            title: @tr("Replace everything with “{}”?", root.name);
             subtitle: root.detail;
         }
 
@@ -311,11 +311,11 @@ export component ConfirmSyncDialog inherits Rectangle {
             spacing: 10px;
             alignment: end;
             GhostButton {
-                text: "Cancel";
+                text: @tr("Cancel");
                 clicked => { root.close(); }
             }
             PrimaryButton {
-                text: "Replace";
+                text: @tr("Replace");
                 clicked => {
                     root.close();
                     root.confirmed();

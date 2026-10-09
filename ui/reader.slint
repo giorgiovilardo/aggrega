@@ -155,7 +155,7 @@ export component ReaderView inherits Rectangle {
                     padding-bottom: 12px;
                     back := Rectangle {
                         accessible-role: button;
-                        accessible-label: "Back to the list";
+                        accessible-label: @tr("Back to the list");
                         accessible-action-default => { root.back(); }
                         height: 36px;
                         width: back-row.preferred-width;
@@ -174,7 +174,7 @@ export component ReaderView inherits Rectangle {
                                 colorize: back-touch.has-hover ? Theme.accent : Theme.ink;
                             }
                             Text {
-                                text: "BACK";
+                                text: @tr("BACK");
                                 vertical-alignment: center;
                                 font-family: Fonts.sans-bold;
                                 font-weight: 700;
@@ -193,12 +193,12 @@ export component ReaderView inherits Rectangle {
                     }
                     IconButton {
                         icon: root.article.read ? Icons.circle : Icons.check;
-                        label: root.article.read ? "Mark as unread" : "Mark as read";
+                        label: root.article.read ? @tr("Mark as unread") : @tr("Mark as read");
                         clicked => { root.toggle-read(); }
                     }
                     IconButton {
                         icon: Icons.link;
-                        label: "Open in browser";
+                        label: @tr("Open in browser");
                         clicked => { root.open-original(); }
                     }
                 }
@@ -254,7 +254,7 @@ export component ReaderView inherits Rectangle {
                 }
 
                 Text {
-                    text: root.loading ? "Fetching the full story from " + root.article.host + "…" : root.note != "" ? root.note : root.article.host;
+                    text: root.loading ? @tr("Fetching the full story from {}…", root.article.host) : root.note != "" ? root.note : root.article.host;
                     wrap: word-wrap;
                     font-family: Fonts.serif;
                     font-italic: true;
@@ -301,7 +301,7 @@ export component ReaderView inherits Rectangle {
                     HorizontalLayout {
                         alignment: start;
                         PrimaryButton {
-                            text: root.article.host != "" ? "Read on " + root.article.host : "Open original";
+                            text: root.article.host != "" ? @tr("Read on {}", root.article.host) : @tr("Open original");
                             icon: Icons.link;
                             has-icon: true;
                             clicked => { root.open-original(); }

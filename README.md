@@ -15,7 +15,7 @@
 - **Unlimited sources.** RSS 0.9x/1.0/2.0, Atom and JSON Feed are all supported.
 - **Smart "Add source".** Paste a feed URL, or just a website such as `theverge.com`. Aggrega finds the feed from the page's `<link rel="alternate">` tags or from common paths like `/feed` and `/rss.xml`.
 - **OPML import and export.** Bring your subscriptions over from Feedly, Inoreader, NetNewsWire, Miniflux or any other reader: **Settings → Import & export**, or **Import from OPML** on the welcome screen. Folders are flattened, sources you already follow are skipped, and Aggrega tells you how many were added, skipped or couldn't be reached. Export writes every source to a standard OPML 2.0 file.
-- **Sync between computers.** Moving to another machine? Open **Settings → Sync** on both: each lists the other copies of Aggrega on the same network (or type the other computer's address, shown on its Sync tab). Pull from one and, after you confirm, its sources, articles and read state replace everything on this computer; your theme and refresh interval stay. It works between macOS and Linux. Nothing listens or announces itself unless the Sync tab is on screen, and the transfer is not encrypted, so use it on networks you trust.
+- **Sync between computers.** Moving to another machine? Open **Settings → Sync** on both: each lists the other copies of Aggrega on the same network (or type the other computer's address, shown on its Sync tab). Pull from one and, after you confirm, its sources, articles and read state replace everything on this computer; your theme, language and refresh interval stay. It works between macOS and Linux. Nothing listens or announces itself unless the Sync tab is on screen, and the transfer is not encrypted, so use it on networks you trust.
 - **Newest posts first.** The list merges every source into one feed sorted by date. You can also focus on a single source from the sidebar.
 - **Works offline.** Everything you've downloaded, including stories and thumbnails, stays readable without a connection. When no source can be reached, Aggrega says it's offline instead of flagging your sources as broken, and it retries the next time you refresh.
 - **Refreshes on launch, on demand and on its own.** Cached articles show up immediately, and fresh ones are fetched in parallel in the background. While Aggrega is open it refreshes again every 20 minutes, which you can change from 5 minutes to 2 hours in **Settings → Updates**. Background refreshes only toast when they find new stories, and they pause while you're offline until you refresh by hand. Aggrega sends conditional requests (ETag / Last-Modified), so feeds that haven't changed cost almost nothing.
@@ -27,6 +27,7 @@
 - **Fits the window.** The layout adapts to the window width. Narrow windows get a slimmer sidebar, tighter margins, smaller headlines and thumbnails, and wide ones cap the column at a comfortable reading width.
 - **Custom title bar.** The window has no system frame. Drag the header or the sidebar masthead to move it, double-click to maximise, and resize from any edge.
 - **Light and dark themes.** Aggrega follows your desktop by default. The toggle cross-fades the whole UI and remembers your choice.
+- **English and Italian.** The language switch next to the theme toggle changes the whole interface at once, dates included, and remembers your choice.
 - **Fluid animations.** Rows glide in, thumbnails zoom gently on hover, headlines turn red, the tab underline and theme switch use spring easing, and a red progress sweep runs while refreshing.
 
 ### Keyboard shortcuts
@@ -103,6 +104,7 @@ aggrega/
 │   ├── feed.rs         # feed parsing, thumbnails, feed discovery
 │   ├── html.rs         # HTML tokenizer, HTML→text
 │   ├── pool.rs         # scoped thread pool
+│   ├── i18n.rs         # interface language, Rust-side translations, dates
 │   ├── reader.rs       # reader view: HTML → text blocks, article extraction
 │   ├── db.rs           # SQLite storage
 │   ├── opml.rs         # OPML import (parsing) and export (writing)
@@ -122,6 +124,7 @@ aggrega/
 ├── assets/
 │   ├── aggrega.svg     # app icon
 │   └── fonts/          # bundled OFL fonts (see FONTS.md)
+├── translations/       # .po catalogs (it); English is the source text
 ├── packaging/          # .desktop file, Arch PKGBUILD, macOS .app bundling
 └── docs/
 ```

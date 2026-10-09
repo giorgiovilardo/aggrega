@@ -77,6 +77,8 @@ component FactRow inherits VerticalLayout {
         Text {
             width: 120px;
             text: root.label.to-uppercase();
+            // Translated labels can outgrow the column.
+            wrap: word-wrap;
             vertical-alignment: center;
             font-family: Fonts.sans-bold;
             font-weight: 700;
@@ -95,7 +97,7 @@ component FactRow inherits VerticalLayout {
         }
         if root.action != "": Rectangle {
             accessible-role: button;
-            accessible-label: root.label + ": " + root.action;
+            accessible-label: @tr("{}: {}", root.label, root.action);
             accessible-action-default => { root.act(); }
             width: link.preferred-width;
 
@@ -218,17 +220,17 @@ component TransferPane inherits VerticalLayout {
     alignment: start;
 
     DialogHeader {
-        kicker: "Import & export";
-        title: "Take your edition with you";
-        subtitle: "Bring your sources over from another feed reader, or save them to a file as a backup.";
+        kicker: @tr("Import & export");
+        title: @tr("Take your edition with you");
+        subtitle: @tr("Bring your sources over from another feed reader, or save them to a file as a backup.");
         subtitle-color: Theme.text-body;
     }
 
     ActionCard {
         icon: Icons.download;
-        title: "Import from OPML";
-        body: "Follow every source in a file exported by another feed reader. Ones you already follow are skipped.";
-        action: root.importing ? "Importing…" : "Import…";
+        title: @tr("Import from OPML");
+        body: @tr("Follow every source in a file exported by another feed reader. Ones you already follow are skipped.");
+        action: root.importing ? @tr("Importing…") : @tr("Import…");
         primary: true;
         enabled: !root.importing;
         act => { root.import-sources(); }
@@ -236,9 +238,9 @@ component TransferPane inherits VerticalLayout {
 
     ActionCard {
         icon: Icons.upload;
-        title: "Export as OPML";
-        body: "The standard subscription list that every feed reader can import.";
-        action: "Export…";
+        title: @tr("Export as OPML");
+        body: @tr("The standard subscription list that every feed reader can import.");
+        action: @tr("Export…");
         enabled: root.has-feeds;
         act => { root.export-sources(); }
     }
@@ -255,9 +257,9 @@ component UpdatesPane inherits VerticalLayout {
     alignment: start;
 
     DialogHeader {
-        kicker: "Updates";
-        title: "Fresh stories, on their own";
-        subtitle: "While Aggrega is open, it checks your sources for new stories on its own. New ones join the list without interrupting what you're reading. Press F5 to refresh right away.";
+        kicker: @tr("Updates");
+        title: @tr("Fresh stories, on their own");
+        subtitle: @tr("While Aggrega is open, it checks your sources for new stories on its own. New ones join the list without interrupting what you're reading. Press F5 to refresh right away.");
         subtitle-color: Theme.text-body;
     }
 
@@ -283,14 +285,14 @@ component UpdatesPane inherits VerticalLayout {
                 horizontal-stretch: 1;
                 spacing: 4px;
                 Text {
-                    text: "Refresh every";
+                    text: @tr("Refresh every");
                     font-family: Fonts.sans-bold;
                     font-weight: 700;
                     font-size: 14px;
                     color: Theme.ink;
                 }
                 Text {
-                    text: "From 5 minutes to 2 hours. Skipped while you're offline; refresh by hand to try again.";
+                    text: @tr("From 5 minutes to 2 hours. Skipped while you're offline; refresh by hand to try again.");
                     wrap: word-wrap;
                     font-family: Fonts.serif;
                     font-size: 14.5px;
@@ -303,15 +305,15 @@ component UpdatesPane inherits VerticalLayout {
                 IconButton {
                     y: (parent.height - self.height) / 2;
                     icon: Icons.minus;
-                    label: "Refresh more often";
+                    label: @tr("Refresh more often");
                     opacity: root.minutes > 5 ? 1 : 0.4;
                     clicked => { root.step(false); }
                 }
                 Text {
                     min-width: 74px;
-                    text: root.minutes + " min";
+                    text: @tr("{} min", root.minutes);
                     accessible-role: text;
-                    accessible-label: "Refresh every " + root.minutes + " minutes";
+                    accessible-label: @tr("Refresh every {} minutes", root.minutes);
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     font-family: Fonts.serif;
@@ -322,7 +324,7 @@ component UpdatesPane inherits VerticalLayout {
                 IconButton {
                     y: (parent.height - self.height) / 2;
                     icon: Icons.plus;
-                    label: "Refresh less often";
+                    label: @tr("Refresh less often");
                     opacity: root.minutes < 120 ? 1 : 0.4;
                     clicked => { root.step(true); }
                 }
@@ -372,9 +374,9 @@ component PeerRow inherits VerticalLayout {
         VerticalLayout {
             alignment: center;
             GhostButton {
-                text: "Pull from here";
+                text: @tr("Pull from here");
                 enabled: root.enabled;
-                accessible-label: "Pull from " + root.peer.name;
+                accessible-label: @tr("Pull from {}", root.peer.name);
                 clicked => { root.pull(root.peer.target); }
             }
         }
@@ -407,9 +409,9 @@ component SyncPane inherits VerticalLayout {
     alignment: start;
 
     DialogHeader {
-        kicker: "Sync";
-        title: "Bring your edition over";
-        subtitle: "Open this tab on another computer running Aggrega on the same network, then pull its sources, articles and reading progress here. Everything on this computer is replaced; your theme and refresh interval stay.";
+        kicker: @tr("Sync");
+        title: @tr("Bring your edition over");
+        subtitle: @tr("Open this tab on another computer running Aggrega on the same network, then pull its sources, articles and reading progress here. Everything on this computer is replaced; your theme, language and refresh interval stay.");
         subtitle-color: Theme.text-body;
     }
 
@@ -419,7 +421,7 @@ component SyncPane inherits VerticalLayout {
             background: Theme.rule;
         }
         FactRow {
-            label: "This computer";
+            label: @tr("This computer");
             value: root.device;
         }
     }
@@ -428,7 +430,7 @@ component SyncPane inherits VerticalLayout {
         padding-top: 8px;
         spacing: 6px;
         SectionKicker {
-            text: "ON THIS NETWORK";
+            text: @tr("ON THIS NETWORK");
         }
         VerticalLayout {
             Rectangle {
@@ -443,7 +445,7 @@ component SyncPane inherits VerticalLayout {
             if root.peers.length == 0: VerticalLayout {
                 padding-top: 12px;
                 CreditNote {
-                    text: "Looking for other computers… Open Settings › Sync on the other one too.";
+                    text: @tr("Looking for other computers… Open Settings › Sync on the other one too.");
                     font-italic: true;
                     color: Theme.text-muted;
                 }
@@ -455,7 +457,7 @@ component SyncPane inherits VerticalLayout {
         padding-top: 8px;
         spacing: 10px;
         SectionKicker {
-            text: "OR ENTER ITS ADDRESS";
+            text: @tr("OR ENTER ITS ADDRESS");
         }
         HorizontalLayout {
             spacing: 10px;
@@ -470,7 +472,7 @@ component SyncPane inherits VerticalLayout {
 
                 Text {
                     x: 14px;
-                    text: "e.g. 192.168.1.5";
+                    text: @tr("e.g. 192.168.1.5");
                     vertical-alignment: center;
                     color: Theme.text-faint;
                     font-family: Fonts.serif;
@@ -484,7 +486,7 @@ component SyncPane inherits VerticalLayout {
                     height: parent.height;
                     vertical-alignment: center;
                     single-line: true;
-                    accessible-label: "Address of the other computer";
+                    accessible-label: @tr("Address of the other computer");
                     font-family: Fonts.serif;
                     font-size: 15px;
                     color: Theme.ink;
@@ -495,7 +497,7 @@ component SyncPane inherits VerticalLayout {
                 }
             }
             PrimaryButton {
-                text: "Connect";
+                text: @tr("Connect");
                 enabled: !root.busy && address.text != "";
                 clicked => { root.submit(); }
             }
@@ -536,7 +538,7 @@ component AboutPane inherits VerticalLayout {
     alignment: start;
 
     Text {
-        text: "ABOUT";
+        text: @tr("ABOUT");
         font-family: Fonts.sans-black;
         font-weight: 800;
         font-size: 10.5px;
@@ -552,7 +554,7 @@ component AboutPane inherits VerticalLayout {
                 source: @image-url("../assets/aggrega.svg");
                 width: 56px;
                 height: 56px;
-                accessible-label: "Aggrega icon";
+                accessible-label: @tr("Aggrega icon");
             }
         }
         Text {
@@ -573,7 +575,7 @@ component AboutPane inherits VerticalLayout {
         }
     }
     Text {
-        text: "YOUR FEEDS · ONE EDITION";
+        text: @tr("YOUR FEEDS · ONE EDITION");
         font-family: Fonts.sans-bold;
         font-weight: 700;
         font-size: 10.5px;
@@ -584,7 +586,7 @@ component AboutPane inherits VerticalLayout {
         height: 4px;
     }
     Text {
-        text: "A fast, lightweight feed reader for RSS, Atom and JSON Feed. Everything stays on this computer: no account, no cloud, no tracking. Aggrega only goes online to fetch your sources, their pictures and the articles you open, and, while the Sync tab is open, to talk to other copies of Aggrega on your network.";
+        text: @tr("A fast, lightweight feed reader for RSS, Atom and JSON Feed. Everything stays on this computer: no account, no cloud, no tracking. Aggrega only goes online to fetch your sources, their pictures and the articles you open, and, while the Sync tab is open, to talk to other copies of Aggrega on your network.");
         wrap: word-wrap;
         font-family: Fonts.serif;
         font-size: 15.5px;
@@ -597,29 +599,29 @@ component AboutPane inherits VerticalLayout {
             background: Theme.rule;
         }
         if root.version != "": FactRow {
-            label: "Version";
+            label: @tr("Version");
             value: root.version;
         }
         FactRow {
-            label: "Copyright";
+            label: @tr("Copyright");
             value: "© 2026 Salvatore Laisa";
         }
         FactRow {
-            label: "License";
+            label: @tr("License");
             value: "MIT";
-            action: "Read";
+            action: @tr("Read");
             act => { root.open-link(root.repository + "/blob/main/LICENSE"); }
         }
         FactRow {
-            label: "Source code";
+            label: @tr("Source code");
             value: root.repository;
-            action: "Open";
+            action: @tr("Open");
             act => { root.open-link(root.repository); }
         }
         FactRow {
-            label: "Issues";
-            value: "Report a bug or suggest an idea";
-            action: "Open";
+            label: @tr("Issues");
+            value: @tr("Report a bug or suggest an idea");
+            action: @tr("Open");
             act => { root.open-link(root.repository + "/issues"); }
         }
     }
@@ -629,7 +631,7 @@ component AboutPane inherits VerticalLayout {
         padding-top: 26px;
         spacing: 10px;
         SectionKicker {
-            text: "YOUR DATA";
+            text: @tr("YOUR DATA");
         }
         VerticalLayout {
             Rectangle {
@@ -637,22 +639,22 @@ component AboutPane inherits VerticalLayout {
                 background: Theme.rule;
             }
             FactRow {
-                label: "Database";
+                label: @tr("Database");
                 value: root.db-path;
                 path: true;
-                action: "Show folder";
+                action: @tr("Show folder");
                 act => { root.open-data-folder(false); }
             }
             FactRow {
-                label: "Thumbnails";
+                label: @tr("Thumbnails");
                 value: root.thumbs-path;
                 path: true;
-                action: "Show folder";
+                action: @tr("Show folder");
                 act => { root.open-data-folder(true); }
             }
         }
         CreditNote {
-            text: "Sources, articles and settings live in the database. The thumbnail cache is safe to delete; it refills as you browse.";
+            text: @tr("Sources, articles and settings live in the database. The thumbnail cache is safe to delete; it refills as you browse.");
         }
     }
 
@@ -661,16 +663,16 @@ component AboutPane inherits VerticalLayout {
         padding-top: 26px;
         spacing: 10px;
         SectionKicker {
-            text: "CREDITS";
+            text: @tr("CREDITS");
         }
         CreditNote {
-            text: "The interface is built with Slint, © SixtyFPS GmbH, used under the Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0.";
+            text: @tr("The interface is built with Slint, © SixtyFPS GmbH, used under the Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0.");
         }
         CreditNote {
-            text: "Source Serif 4, © 2014–2021 Adobe, with Reserved Font Name “Source”, and Libre Franklin, © 2020 The Libre Franklin Project Authors, are used under the SIL Open Font License 1.1, included with Aggrega as OFL.txt.";
+            text: @tr("Source Serif 4, © 2014–2021 Adobe, with Reserved Font Name “Source”, and Libre Franklin, © 2020 The Libre Franklin Project Authors, are used under the SIL Open Font License 1.1, included with Aggrega as OFL.txt.");
         }
         CreditNote {
-            text: "Storage is powered by SQLite, which is in the public domain. Other open-source libraries are used under their own licenses, including MIT, Apache 2.0, BSD, ISC, Zlib, MPL 2.0 and Unicode.";
+            text: @tr("Storage is powered by SQLite, which is in the public domain. Other open-source libraries are used under their own licenses, including MIT, Apache 2.0, BSD, ISC, Zlib, MPL 2.0 and Unicode.");
         }
         // The Slint Royalty-free License asks for the AboutSlint widget in
         // the app's About screen.
@@ -754,7 +756,7 @@ export component SettingsDialog inherits Rectangle {
                         padding-bottom: 22px;
                         spacing: 8px;
                         Text {
-                            text: "Settings";
+                            text: @tr("Settings");
                             font-family: Fonts.serif-black;
                             font-weight: 900;
                             font-size: 28px;
@@ -768,25 +770,25 @@ export component SettingsDialog inherits Rectangle {
                     }
 
                     SettingsTab {
-                        label: "Import & export";
+                        label: @tr("Import & export");
                         icon: Icons.download;
                         selected: root.tab == 0;
                         clicked => { root.tab = 0; }
                     }
                     SettingsTab {
-                        label: "Sync";
+                        label: @tr("Sync");
                         icon: Icons.sync;
                         selected: root.tab == 1;
                         clicked => { root.tab = 1; }
                     }
                     SettingsTab {
-                        label: "Updates";
+                        label: @tr("Updates");
                         icon: Icons.refresh;
                         selected: root.tab == 2;
                         clicked => { root.tab = 2; }
                     }
                     SettingsTab {
-                        label: "About";
+                        label: @tr("About");
                         icon: Icons.info;
                         selected: root.tab == 3;
                         clicked => { root.tab = 3; }
@@ -842,7 +844,7 @@ export component SettingsDialog inherits Rectangle {
                     x: parent.width - self.width - 14px;
                     y: 16px;
                     icon: Icons.x;
-                    label: "Close settings";
+                    label: @tr("Close settings");
                     clicked => { root.close(); }
                 }
             }

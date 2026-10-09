@@ -29,10 +29,11 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
 | `src/pool.rs` | `par_map` / `par_for_each`, a tiny scoped thread pool for short blocking jobs |
 | `src/opml.rs` | OPML as plain data: `parse` reads the feeds out of any reader's export (nested folders flattened, duplicates dropped, via `html::tokenize`) and `write` produces an OPML 2.0 document. The import itself (subscribing in parallel, then storing) lives in `app.rs` |
-| `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes. For sync, `snapshot_to` (`VACUUM INTO`) and `replace_with` (SQLite's backup API, in one step, keeping the local theme and refresh interval) |
+| `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes. For sync, `snapshot_to` (`VACUUM INTO`) and `replace_with` (SQLite's backup API, in one step, keeping the local theme, refresh interval and language) |
 | `src/sync.rs` | LAN sync, std networking only. A `Session` (alive only while the Sync tab is on screen) broadcasts a UDP beacon, collects the beacons of other copies, and serves database snapshots over TCP. `info` and `pull` are the client side |
 | `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns a `SharedPixelBuffer`. Also loads reader pictures, shrunk to fit the column (not cached) |
 | `src/reader.rs` | Reader view content: HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
+| `src/i18n.rs` | Interface language (English or Italian, per thread like Slint's): `tr!`/`trn!` look Rust-built strings up in the same `.po` catalog Slint bundles, plus localised dates. Its tests check every marked string has a translation |
 | `src/text.rs` | Whitespace collapsing, truncation, relative times ("5m ago"), avatar letter and colour |
 
 Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` build on them, `fetch` adds HTTP on top of `feed`, and `app` uses everything. `db` needs only `feed`'s data types, plus `fetch::is_unreachable` to tell an offline refresh from a broken source.
@@ -76,7 +77,7 @@ Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` bu
 feeds(id, url UNIQUE, title, site_url, etag, last_modified, last_fetched, last_error, added_at)
 articles(id, feed_id → feeds ON DELETE CASCADE, guid, title, link, snippet, image_url,
          published, fetched_at, read, body, UNIQUE(feed_id, guid))
-settings(key PRIMARY KEY, value)            -- theme, last_refresh, refresh_interval
+settings(key PRIMARY KEY, value)            -- theme, language, last_refresh, refresh_interval
 ```
 
 Indexes cover the hot queries: `articles(published DESC)`, `articles(feed_id, published DESC)` and `articles(feed_id, read)`. For the list, articles keep a plain-text snippet of at most 280 chars. For the reader, `body` holds the article as simplified text blocks, one per line (`p `, `h `, `q `, `l `, `c `, `i ` + text, with `\` and newlines escaped), not HTML, which keeps it compact. Version 2 added `body`; it is `NULL` for older rows, which makes the reader fetch the page. Read articles older than 90 days are pruned after each refresh.
@@ -103,6 +104,8 @@ The look is editorial, in the style of a magazine front page. It uses warm newsp
 Every static weight has its own family name, so the `Fonts` global maps roles to family names. The files come from Bunny Fonts; licences are listed in `assets/fonts/FONTS.md`.
 
 **Theme switching.** Every colour comes from the `Theme` global. Each token is a binding on `Theme.dark`, and surfaces declare `animate background` (and similar), so toggling the theme cross-fades the whole UI. On first run, `Theme.dark` follows `Palette.color-scheme`, which is the desktop preference. After the user toggles it, the choice is saved in `settings.theme`.
+
+**Translations.** Every user-facing string in `ui/` is wrapped in `@tr()`; `build.rs` bundles `translations/<lang>/LC_MESSAGES/aggrega.po` (no msgctxt) into the binary. Strings built in Rust use `tr!`/`trn!` from `src/i18n.rs`, which read the same `.po`, with Slint's placeholders (`{}`, `{0}`, `{n}` for plurals). The `LanguageSwitch` left of the theme switch opens a `PopupWindow` list; picking a language calls `App::change_language`, which runs `slint::select_bundled_translation`, re-renders the Rust strings in place (view title, status line, dates) and saves `settings.language`. English is the default, whatever the desktop locale. To add a language: add its `.po`, a `Lang` variant, its date names, and an entry in `LanguageSwitch.options`.
 
 **Opening sequence.** `AppWindow.intro` animates linearly from 0 to 1 over 2.8 s. Each element derives its own eased progress from that value with `Motion.seg(t, from, to)` and `Motion.ease()`:
 1. The rule draws.

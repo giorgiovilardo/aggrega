@@ -44,7 +44,7 @@ export component AppWindow inherits Window {
     in property <bool> refreshing;
     in property <bool> has-feeds;
     in property <int> total-unread;
-    in property <string> view-title: "All articles";
+    in property <string> view-title: @tr("All articles");
     in property <string> status-text;
     in property <string> today;
     in property <string> version;
@@ -65,6 +65,8 @@ export component AppWindow inherits Window {
     in property <bool> sync-note-error;
     // Settings › Updates: minutes between background refreshes.
     in property <int> refresh-minutes;
+    // Interface language code ("en", "it"), set from Rust.
+    in property <string> language: "en";
 
     // Reader view: the open article and its content blocks.
     in-out property <bool> reader-open: false;
@@ -90,6 +92,8 @@ export component AppWindow inherits Window {
     callback add-feed(string);
     callback remove-feed(int);
     callback theme-changed(bool);
+    // Picked in the sidebar; Rust switches the translations and saves it.
+    callback language-changed(string);
     callback close-window();
     // The reader was closed; Rust drops its content.
     callback close-reader();
@@ -280,7 +284,9 @@ export component AppWindow inherits Window {
                 total-unread: root.total-unread;
                 dark: Theme.dark;
                 version: root.version;
+                language: root.language;
                 select(id) => { root.select(id); }
+                select-language(code) => { root.language-changed(code); }
                 add => { root.open-add-dialog(); }
                 settings => { settings-dialog.open(); }
                 remove(id, name) => { confirm.ask(id, name); }
@@ -361,7 +367,7 @@ export component AppWindow inherits Window {
                                     alignment: end;
                                     Tabs {
                                         segment: main.narrow ? 64px : 76px;
-                                        options: ["Unread", "All"];
+                                        options: [@tr("Unread"), @tr("All")];
                                         index: root.unread-only ? 0 : 1;
                                         changed(i) => {
                                             root.unread-only = i == 0;
@@ -373,7 +379,7 @@ export component AppWindow inherits Window {
                                     alignment: end;
                                     IconButton {
                                         icon: Icons.check-all;
-                                        label: "Mark all as read";
+                                        label: @tr("Mark all as read");
                                         clicked => { root.mark-all-read(); }
                                     }
                                 }
@@ -381,7 +387,7 @@ export component AppWindow inherits Window {
                                     alignment: end;
                                     IconButton {
                                         icon: Icons.refresh;
-                                        label: "Refresh";
+                                        label: @tr("Refresh");
                                         spinning: root.refreshing;
                                         clicked => { root.refresh(); }
                                     }
@@ -405,20 +411,20 @@ export component AppWindow inherits Window {
 
                     if !root.has-feeds: EmptyState {
                         vertical-stretch: 1;
-                        kicker: "First edition";
-                        title: "Welcome to Aggrega";
-                        subtitle: "Follow blogs, newspapers and YouTube channels.\nEverything stays on this computer — no account, no cloud.";
-                        action: "Add your first source";
+                        kicker: @tr("First edition");
+                        title: @tr("Welcome to Aggrega");
+                        subtitle: @tr("Follow blogs, newspapers and YouTube channels.\nEverything stays on this computer — no account, no cloud.");
+                        action: @tr("Add your first source");
                         act => { root.open-add-dialog(); }
-                        secondary: root.importing ? "Importing…" : "Import from OPML";
+                        secondary: root.importing ? @tr("Importing…") : @tr("Import from OPML");
                         secondary-act => { if (!root.importing) { root.import-sources(); } }
                     }
 
                     if root.has-feeds && root.articles.length == 0: EmptyState {
                         vertical-stretch: 1;
-                        kicker: root.refreshing ? "Stop the presses" : root.unread-only ? "That's the edition" : "Quiet news day";
-                        title: root.refreshing ? "Fetching the latest…" : root.unread-only ? "You're all caught up" : "Nothing here yet";
-                        subtitle: root.refreshing ? "This only takes a moment." : root.unread-only ? "You've read everything. Time for a coffee." : "Hit refresh to check your sources for new stories.";
+                        kicker: root.refreshing ? @tr("Stop the presses") : root.unread-only ? @tr("That's the edition") : @tr("Quiet news day");
+                        title: root.refreshing ? @tr("Fetching the latest…") : root.unread-only ? @tr("You're all caught up") : @tr("Nothing here yet");
+                        subtitle: root.refreshing ? @tr("This only takes a moment.") : root.unread-only ? @tr("You've read everything. Time for a coffee.") : @tr("Hit refresh to check your sources for new stories.");
                     }
 
                     if root.has-feeds && root.articles.length > 0: ListView {
@@ -637,7 +643,7 @@ export component AppWindow inherits Window {
                 Text {
                     horizontal-alignment: center;
                     opacity: splash.tag;
-                    text: "YOUR FEEDS · ONE EDITION";
+                    text: @tr("YOUR FEEDS · ONE EDITION");
                     font-family: Fonts.sans-black;
                     font-weight: 800;
                     font-size: 13px;

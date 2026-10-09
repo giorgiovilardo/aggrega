@@ -1,7 +1,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
 import { FeedItem } from "types.slint";
-import { Badge, IconButton, PrimaryButton, SourceMark, ThemeSwitch } from "widgets.slint";
+import { Badge, IconButton, LanguageSwitch, PrimaryButton, SourceMark, ThemeSwitch } from "widgets.slint";
 
 component SidebarItem inherits Rectangle {
     in property <string> title;
@@ -146,12 +146,15 @@ export component Sidebar inherits Rectangle {
     in property <int> total-unread;
     in property <bool> dark;
     in property <string> version;
+    // Interface language code ("en", "it").
+    in property <string> language;
     callback select(int);
     callback add();
     callback remove(int, string);
     callback toggle-theme();
     callback toggle-maximize();
     callback settings();
+    callback select-language(string);
 
     background: Theme.sidebar;
     animate background { duration: 300ms; }
@@ -206,7 +209,7 @@ export component Sidebar inherits Rectangle {
                     background: Theme.ink;
                 }
                 Text {
-                    text: "YOUR FEEDS · ONE EDITION";
+                    text: @tr("YOUR FEEDS · ONE EDITION");
                     font-family: Fonts.sans-bold;
                     font-weight: 700;
                     font-size: 9.5px;
@@ -218,7 +221,7 @@ export component Sidebar inherits Rectangle {
         }
 
         SidebarItem {
-            title: "All articles";
+            title: @tr("All articles");
             use-icon: true;
             icon: Icons.inbox;
             unread: root.total-unread;
@@ -229,10 +232,10 @@ export component Sidebar inherits Rectangle {
         SectionLabel {
             padding-top: 22px;
             padding-bottom: 8px;
-            text: "SOURCES";
+            text: @tr("SOURCES");
             IconButton {
                 icon: Icons.plus;
-                label: "Add source";
+                label: @tr("Add source");
                 size: 26px;
                 icon-size: 15px;
                 clicked => { root.add(); }
@@ -243,7 +246,7 @@ export component Sidebar inherits Rectangle {
             padding-left: 16px;
             padding-right: 16px;
             Text {
-                text: "No sources yet. Add a blog, a newspaper or a YouTube channel to start your edition.";
+                text: @tr("No sources yet. Add a blog, a newspaper or a YouTube channel to start your edition.");
                 wrap: word-wrap;
                 font-family: Fonts.serif;
                 font-italic: true;
@@ -281,19 +284,27 @@ export component Sidebar inherits Rectangle {
             padding-right: 16px;
             spacing: 12px;
             PrimaryButton {
-                text: "Add source";
+                text: @tr("Add source");
                 icon: Icons.plus;
                 has-icon: true;
                 clicked => { root.add(); }
             }
             HorizontalLayout {
+                spacing: 8px;
                 IconButton {
                     icon: Icons.settings;
-                    label: "Settings";
+                    label: @tr("Settings");
                     clicked => { root.settings(); }
                 }
                 Rectangle {
                     horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    LanguageSwitch {
+                        language: root.language;
+                        selected(code) => { root.select-language(code); }
+                    }
                 }
                 VerticalLayout {
                     alignment: center;

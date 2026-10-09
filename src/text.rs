@@ -2,6 +2,8 @@
 
 use chrono::{DateTime, Datelike, Local};
 
+use crate::i18n::{self, tr};
+
 pub fn collapse_ws(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for word in s.split_whitespace() {
@@ -30,20 +32,16 @@ pub fn truncate(s: &str, max: usize) -> String {
 pub fn ago(ts: i64, now: i64) -> String {
     let d = (now - ts).max(0);
     match d {
-        0..=59 => "just now".into(),
-        60..=3599 => format!("{}m ago", d / 60),
-        3600..=86_399 => format!("{}h ago", d / 3600),
-        86_400..=604_799 => format!("{}d ago", d / 86_400),
+        0..=59 => tr!("just now"),
+        60..=3599 => tr!("{}m ago", d / 60),
+        3600..=86_399 => tr!("{}h ago", d / 3600),
+        86_400..=604_799 => tr!("{}d ago", d / 86_400),
         _ => {
             let Some(t) = DateTime::from_timestamp(ts, 0) else {
                 return String::new();
             };
             let t = t.with_timezone(&Local);
-            if t.year() == Local::now().year() {
-                t.format("%b %-d").to_string()
-            } else {
-                t.format("%b %-d, %Y").to_string()
-            }
+            i18n::short_date(t, t.year() != Local::now().year())
         }
     }
 }

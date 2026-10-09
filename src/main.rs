@@ -6,6 +6,7 @@ mod db;
 mod feed;
 mod fetch;
 mod html;
+mod i18n;
 mod opml;
 mod pool;
 mod reader;
@@ -31,12 +32,6 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
         ui.global::<Theme>().set_dark(theme == "dark");
     }
     ui.invoke_apply_theme();
-    ui.set_today(
-        chrono::Local::now()
-            .format("%A, %B %-d, %Y")
-            .to_string()
-            .into(),
-    );
 
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_repository(env!("CARGO_PKG_REPOSITORY").into());
@@ -59,6 +54,7 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_export_sources(|| with_app(|a| a.export_sources()));
     ui.on_step_refresh_interval(|longer| with_app(|a| a.step_refresh_interval(longer)));
     ui.on_theme_changed(|dark| with_app(|a| a.save_theme(dark)));
+    ui.on_language_changed(|code| with_app(|a| a.change_language(code)));
     ui.on_sync_active(|on| with_app(|a| a.sync_active(on)));
     ui.on_sync_connect(|address| with_app(|a| a.sync_connect(address)));
     ui.on_sync_confirmed(|| with_app(|a| a.sync_confirmed()));

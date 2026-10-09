@@ -231,6 +231,180 @@ export component ThemeSwitch inherits Rectangle {
     }
 }
 
+// One language the interface can be shown in, named in that language.
+struct LanguageOption {
+    code: string,
+    name: string,
+    flag: image,
+}
+
+// A small flag with a hairline edge, so white stripes don't melt into the paper.
+component Flag inherits Rectangle {
+    in property <image> source;
+
+    width: 18px;
+    height: 12px;
+    border-radius: 2px;
+    clip: true;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        image-fit: cover;
+    }
+    Rectangle {
+        border-radius: parent.border-radius;
+        border-width: 1px;
+        border-color: Theme.rule;
+    }
+}
+
+component LanguageRow inherits Rectangle {
+    in property <LanguageOption> option;
+    in property <bool> selected;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.option.name;
+    accessible-action-default => { root.clicked(); }
+
+    height: 34px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: 120ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Flag {
+                source: root.option.flag;
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.option.name;
+            vertical-alignment: center;
+            font-family: root.selected ? Fonts.sans-bold : Fonts.sans;
+            font-weight: root.selected ? 700 : 500;
+            font-size: 13.5px;
+            color: Theme.ink;
+        }
+        Text {
+            text: root.option.code.to-uppercase();
+            vertical-alignment: center;
+            font-family: Fonts.sans-semibold;
+            font-weight: 600;
+            font-size: 11.5px;
+            letter-spacing: 0.6px;
+            color: Theme.text-faint;
+        }
+        Image {
+            source: Icons.check;
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            colorize: Theme.accent;
+            opacity: root.selected ? 1 : 0;
+        }
+    }
+}
+
+// Interface language, a pill sized and styled like ThemeSwitch: the current
+// flag and code. A click opens a small list above it to pick another.
+export component LanguageSwitch inherits Rectangle {
+    in property <string> language;
+    callback selected(string);
+
+    property <[LanguageOption]> options: [
+        { code: "en", name: "English", flag: Icons.flag-en },
+        { code: "it", name: "Italiano", flag: Icons.flag-it },
+    ];
+    // English unless the code is one of the others.
+    property <LanguageOption> current: root.language == "it" ? root.options[1] : root.options[0];
+
+    accessible-role: button;
+    accessible-label: @tr("Language");
+    accessible-value: root.current.name;
+    accessible-action-default => { popup.show(); }
+
+    width: max(56px, row.preferred-width);
+    height: 30px;
+    border-radius: self.height / 2;
+    background: Theme.chip;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.text-faint : Theme.rule;
+    animate background, border-color { duration: 300ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { popup.show(); }
+    }
+
+    row := HorizontalLayout {
+        alignment: center;
+        padding-left: 9px;
+        padding-right: 11px;
+        spacing: 7px;
+        VerticalLayout {
+            alignment: center;
+            Flag {
+                source: root.current.flag;
+            }
+        }
+        Text {
+            text: root.current.code.to-uppercase();
+            vertical-alignment: center;
+            font-family: Fonts.sans-bold;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.6px;
+            color: Theme.ink;
+        }
+    }
+
+    // Opens upwards: the switch sits at the bottom of the sidebar.
+    popup := PopupWindow {
+        width: 172px;
+        height: root.options.length * 34px + 10px;
+        x: 0;
+        y: -self.height - 8px;
+
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.rule;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow;
+
+            VerticalLayout {
+                padding: 5px;
+                for option in root.options: LanguageRow {
+                    option: option;
+                    selected: option.code == root.current.code;
+                    // Emit before closing: closing drops this row.
+                    clicked => {
+                        if (option.code != root.current.code) {
+                            root.selected(option.code);
+                        }
+                        popup.close();
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Unread count: plain figures, red when the row is selected.
 export component Badge inherits Rectangle {
     in property <int> count;
@@ -435,7 +609,7 @@ export component MacWindowControls inherits Rectangle {
 
     TrafficLight {
         x: 0;
-        label: "Close";
+        label: @tr("Close");
         fill: #ff5f57;
         ring: #e2463f;
         glyph: Icons.mac-close;
@@ -446,7 +620,7 @@ export component MacWindowControls inherits Rectangle {
     }
     TrafficLight {
         x: root.pitch;
-        label: "Minimize";
+        label: @tr("Minimize");
         fill: #febc2e;
         ring: #e1a116;
         glyph: Icons.mac-minimize;
@@ -457,7 +631,7 @@ export component MacWindowControls inherits Rectangle {
     }
     TrafficLight {
         x: 2 * root.pitch;
-        label: root.maximized ? "Restore" : "Zoom";
+        label: root.maximized ? @tr("Restore") : @tr("Zoom");
         fill: #28c840;
         ring: #14ae2b;
         glyph: root.maximized ? Icons.mac-unzoom : Icons.mac-zoom;
