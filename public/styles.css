@@ -318,6 +318,76 @@
     .i-moon { opacity: 1; rotate: 0deg; }
   }
 
+  /* Language switch, as in the sidebar footer: flag and code, with a small list. */
+  .lang {
+    flex: none;
+    position: relative;
+  }
+
+  .lang__button {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 11px 0 9px;
+    border-radius: 999px;
+    border: 1px solid var(--rule);
+    background: var(--chip);
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    transition: border-color .2s;
+    &:hover, &[aria-expanded="true"] { border-color: var(--text-faint); }
+  }
+
+  .flag {
+    width: 18px;
+    height: 12px;
+    border-radius: 2px;
+    object-fit: cover;
+    box-shadow: 0 0 0 1px var(--rule);
+  }
+
+  .lang__menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 10;
+    min-width: 172px;
+    padding: 5px;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px var(--shadow);
+
+    button {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 4px;
+      background: none;
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: .85rem;
+      text-align: start;
+      &:hover { background: var(--hover); }
+      &[aria-current="true"] { font-weight: 700; }
+    }
+
+    .lang__code {
+      margin-left: auto;
+      font-size: .7rem;
+      letter-spacing: .06em;
+      color: var(--text-faint);
+    }
+  }
+
   /* --- Front page --- */
   .front {
     padding-top: clamp(40px, 8vw, 96px);

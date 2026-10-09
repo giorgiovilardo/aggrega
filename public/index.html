@@ -61,6 +61,17 @@
         <a data-i18n="nav.download" href="#download">Download</a>
         <a href="https://github.com/moebiusmania/aggrega" rel="noopener">GitHub</a>
       </nav>
+      <!-- Language switch. Hidden without JavaScript, which does the translating. -->
+      <div class="lang" hidden>
+        <button class="lang__button" type="button" aria-expanded="false" aria-controls="lang-menu" aria-label="Language" data-i18n-label="lang.label">
+          <img class="flag" src="images/flag-en.svg" alt="" width="18" height="12">
+          <span class="lang__code">EN</span>
+        </button>
+        <ul class="lang__menu" id="lang-menu" hidden>
+          <li><button type="button" lang="en" data-lang="en"><img class="flag" src="images/flag-en.svg" alt="" width="18" height="12">English<span class="lang__code">EN</span></button></li>
+          <li><button type="button" lang="it" data-lang="it"><img class="flag" src="images/flag-it.svg" alt="" width="18" height="12">Italiano<span class="lang__code">IT</span></button></li>
+        </ul>
+      </div>
       <button data-i18n-label="theme.label" class="theme-switch" type="button" aria-label="Dark theme" aria-pressed="false">
         <span class="theme-switch__knob">
           <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>

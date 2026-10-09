@@ -1,8 +1,10 @@
-// Page language: the visitor's first browser language the page speaks,
-// otherwise English. English lives in index.html (so the page reads fine
-// without JavaScript); other languages replace the elements tagged with
-// data-i18n (content), data-i18n-label (aria-label), data-i18n-alt (alt) and
-// data-i18n-content (meta content). Translations are trusted, static HTML.
+// Page language: English, unless the browser's own language is Italian or the
+// visitor picked one with the switch (remembered in localStorage). English
+// lives in index.html, so the page reads fine without JavaScript. Other
+// languages replace the elements tagged with data-i18n (content),
+// data-i18n-label (aria-label), data-i18n-alt (alt) and data-i18n-content
+// (meta content); the English is kept to switch back. Translations are
+// trusted, static HTML.
 
 const STRINGS = {
   it: {
@@ -103,28 +105,54 @@ const STRINGS = {
     "footer.links": "<a href=\"https://github.com/moebiusmania/aggrega\">GitHub</a> · <a href=\"https://github.com/moebiusmania/aggrega/issues\">Segnala un problema</a> · <a href=\"https://github.com/moebiusmania/aggrega/blob/main/CONTRIBUTING.md\">Contribuisci</a>",
     "copy": "Copia",
     "copied": "Copiato",
-    "copy.fallback": "Seleziona e copia"
+    "copy.fallback": "Seleziona e copia",
+    "lang.label": "Lingua"
   },
 };
 
-const LANG =
-  (navigator.languages ?? [navigator.language])
-    .map((l) => String(l).toLowerCase().split("-")[0])
-    .find((l) => l === "en" || l in STRINGS) ?? "en";
+// How each tag reads and writes its element.
+const TAGS = [
+  ["data-i18n", (el) => el.innerHTML, (el, s) => (el.innerHTML = s)],
+  ["data-i18n-label", (el) => el.getAttribute("aria-label"), (el, s) => el.setAttribute("aria-label", s)],
+  ["data-i18n-alt", (el) => el.alt, (el, s) => (el.alt = s)],
+  ["data-i18n-content", (el) => el.content, (el, s) => (el.content = s)],
+];
+// Each tagged element's English, captured before the first change.
+const ENGLISH = new Map();
+
+let LANG = "en";
 
 // The current language's text for `key`, or `fallback` (the English).
 const t = (key, fallback) => STRINGS[LANG]?.[key] ?? fallback;
 
-if (LANG !== "en") {
-  document.documentElement.lang = LANG;
-  const apply = (attr, set) => {
-    for (const el of document.querySelectorAll(`[${attr}]`)) {
-      const text = STRINGS[LANG][el.getAttribute(attr)];
-      if (text !== undefined) set(el, text);
+const isLang = (l) => l === "en" || Object.hasOwn(STRINGS, l);
+
+function preferredLang() {
+  try {
+    const saved = localStorage.getItem("aggrega-lang");
+    if (isLang(saved)) return saved;
+  } catch {}
+  const browser = String(navigator.language).toLowerCase().split("-")[0];
+  return browser === "it" ? "it" : "en";
+}
+
+// Switches the page to `lang` and tells main.js (dateline, switch) about it.
+function setLang(lang) {
+  if (!isLang(lang)) return;
+  LANG = lang;
+  document.documentElement.lang = lang;
+  for (const [tag, get, set] of TAGS) {
+    for (const el of document.querySelectorAll(`[${tag}]`)) {
+      const english = ENGLISH.get(el) ?? new Map();
+      ENGLISH.set(el, english);
+      if (!english.has(tag)) english.set(tag, get(el));
+      set(el, t(el.getAttribute(tag), english.get(tag)));
     }
-  };
-  apply("data-i18n", (el, s) => (el.innerHTML = s));
-  apply("data-i18n-label", (el, s) => el.setAttribute("aria-label", s));
-  apply("data-i18n-alt", (el, s) => (el.alt = s));
-  apply("data-i18n-content", (el, s) => (el.content = s));
+  }
+  document.dispatchEvent(new Event("langchange"));
+}
+
+{
+  const lang = preferredLang();
+  if (lang !== "en") setLang(lang);
 }
