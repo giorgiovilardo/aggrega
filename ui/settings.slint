@@ -333,6 +333,102 @@ component UpdatesPane inherits VerticalLayout {
     }
 }
 
+// Window zoom, stepped from 80% to 160%.
+component UiPane inherits VerticalLayout {
+    in property <int> zoom-percent;
+    callback step(int);
+
+    padding: 40px;
+    padding-top: 38px;
+    spacing: 18px;
+    alignment: start;
+
+    DialogHeader {
+        kicker: @tr("UI");
+        title: @tr("Make it easier on the eyes");
+        subtitle: @tr("Scale the text and layout of the whole window. You can also press Ctrl or Cmd with + and - anywhere in Aggrega, and 0 to go back to 100%.");
+        subtitle-color: Theme.text-body;
+    }
+
+    Rectangle {
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.rule;
+        background: Theme.bg;
+
+        HorizontalLayout {
+            padding: 18px;
+            spacing: 14px;
+            VerticalLayout {
+                alignment: start;
+                Image {
+                    source: Icons.sparkles;
+                    width: 20px;
+                    height: 20px;
+                    colorize: Theme.accent;
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text {
+                    text: @tr("Zoom");
+                    font-family: Fonts.sans-bold;
+                    font-weight: 700;
+                    font-size: 14px;
+                    color: Theme.ink;
+                }
+                Text {
+                    text: @tr("From 80% to 160%.");
+                    wrap: word-wrap;
+                    font-family: Fonts.serif;
+                    font-size: 14.5px;
+                    color: Theme.text-body;
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.minus;
+                    label: @tr("Zoom out");
+                    opacity: root.zoom-percent > 80 ? 1 : 0.4;
+                    clicked => { root.step(-1); }
+                }
+                Text {
+                    min-width: 74px;
+                    text: @tr("{}%", root.zoom-percent);
+                    accessible-role: text;
+                    accessible-label: @tr("Zoom {} percent", root.zoom-percent);
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    font-family: Fonts.serif;
+                    font-weight: 700;
+                    font-size: 18px;
+                    color: Theme.ink;
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.plus;
+                    label: @tr("Zoom in");
+                    opacity: root.zoom-percent < 160 ? 1 : 0.4;
+                    clicked => { root.step(1); }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: start;
+        GhostButton {
+            text: @tr("Reset");
+            enabled: root.zoom-percent != 100;
+            clicked => { root.step(0); }
+        }
+    }
+}
+
 // One copy of Aggrega found on the network, with a button to pull from it.
 component PeerRow inherits VerticalLayout {
     in property <SyncPeer> peer;
@@ -702,6 +798,7 @@ export component SettingsDialog inherits Rectangle {
     in property <string> sync-note;
     in property <bool> sync-note-error;
     in property <int> refresh-minutes;
+    in property <int> zoom-percent;
     callback closed();
     callback import-sources();
     callback sync-connect(string);
@@ -709,6 +806,7 @@ export component SettingsDialog inherits Rectangle {
     callback open-link(string);
     callback open-data-folder(bool);
     callback step-refresh-interval(bool);
+    callback zoom(int);
 
     out property <bool> shown: false;
     in-out property <int> tab: 0;
@@ -788,10 +886,16 @@ export component SettingsDialog inherits Rectangle {
                         clicked => { root.tab = 2; }
                     }
                     SettingsTab {
-                        label: @tr("About");
-                        icon: Icons.info;
+                        label: @tr("UI");
+                        icon: Icons.sparkles;
                         selected: root.tab == 3;
                         clicked => { root.tab = 3; }
+                    }
+                    SettingsTab {
+                        label: @tr("About");
+                        icon: Icons.info;
+                        selected: root.tab == 4;
+                        clicked => { root.tab = 4; }
                     }
                 }
             }
@@ -802,7 +906,7 @@ export component SettingsDialog inherits Rectangle {
 
                 ScrollView {
                     content-width: self.visible-width;
-                    content-height: max(self.visible-height, root.tab == 0 ? transfer-pane.preferred-height : root.tab == 1 ? sync-pane.preferred-height : root.tab == 2 ? updates-pane.preferred-height : about-pane.preferred-height);
+                    content-height: max(self.visible-height, root.tab == 0 ? transfer-pane.preferred-height : root.tab == 1 ? sync-pane.preferred-height : root.tab == 2 ? updates-pane.preferred-height : root.tab == 3 ? ui-pane.preferred-height : about-pane.preferred-height);
 
                     transfer-pane := TransferPane {
                         visible: root.tab == 0;
@@ -828,8 +932,14 @@ export component SettingsDialog inherits Rectangle {
                         minutes: root.refresh-minutes;
                         step(longer) => { root.step-refresh-interval(longer); }
                     }
-                    about-pane := AboutPane {
+                    ui-pane := UiPane {
                         visible: root.tab == 3;
+                        width: parent.width;
+                        zoom-percent: root.zoom-percent;
+                        step(s) => { root.zoom(s); }
+                    }
+                    about-pane := AboutPane {
+                        visible: root.tab == 4;
                         width: parent.width;
                         version: root.version;
                         repository: root.repository;

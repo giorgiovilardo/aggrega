@@ -15,7 +15,7 @@ pub const SCHEMA_VERSION: i32 = 2;
 
 /// Settings that belong to this computer, kept when a sync pull replaces
 /// the database.
-const LOCAL_SETTINGS: [&str; 3] = ["theme", "refresh_interval", "language"];
+const LOCAL_SETTINGS: [&str; 4] = ["theme", "refresh_interval", "language", "zoom"];
 
 pub struct Store {
     conn: Connection,
@@ -602,6 +602,7 @@ mod tests {
         theirs.set_setting("theme", "dark")?;
         theirs.set_setting("last_refresh", "123")?;
         theirs.set_setting("refresh_interval", "60")?;
+        theirs.set_setting("zoom", "125")?;
         assert_eq!(
             theirs.stats()?,
             Stats {
@@ -616,6 +617,7 @@ mod tests {
         let mut ours = Store::open(&dir.path().join("ours.db"))?;
         ours.add_feed("https://y.org/feed", &sample(5))?;
         ours.set_setting("theme", "light")?;
+        ours.set_setting("zoom", "90")?;
         // Another connection, like the UI thread's, sees the new contents.
         let ui = Store::open(&dir.path().join("ours.db"))?;
         ours.replace_with(&snapshot)?;
@@ -628,6 +630,7 @@ mod tests {
             "theme stays"
         );
         assert_eq!(ui.setting("refresh_interval")?, None, "interval stays");
+        assert_eq!(ui.setting("zoom")?.as_deref(), Some("90"), "zoom stays");
         let mode: String = ui.conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
         assert_eq!(mode, "wal");
         // Still writable through either connection.

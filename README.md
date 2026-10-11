@@ -37,6 +37,8 @@
 | `F5` / `Ctrl+R` | Refresh all sources |
 | `Ctrl+N` | Add a source |
 | `Ctrl+,` | Open settings |
+| `Ctrl/Cmd` + `+` / `-` | Zoom the whole window in / out (80% to 160%) |
+| `Ctrl/Cmd` + `0` | Back to 100% zoom |
 | `Enter` | Confirm in the "Add source" dialog |
 | `Esc` | Close dialogs, or close the reader |
 | `Backspace` / `←` | Back to the list (reader) |
@@ -119,7 +121,7 @@ aggrega/
 │   ├── article-card.slint
 │   ├── reader.slint    # in-app reader view
 │   ├── dialogs.slint   # add-source, remove and sync confirmation modals
-│   ├── settings.slint  # settings modal (tabbed: Import & export, Sync, Updates, About)
+│   ├── settings.slint  # settings modal (tabbed: Import & export, Sync, Updates, UI, About)
 │   └── icons/          # SVG icons
 ├── assets/
 │   ├── aggrega.svg     # app icon
