@@ -84,8 +84,8 @@ msgstr "Nuova fonte"
 msgid "Add to your edition"
 msgstr "Aggiungi alla tua edizione"
 
-msgid "Paste an RSS, Atom or JSON feed — or just a website address. Aggrega will find the feed for you."
-msgstr "Incolla un feed RSS, Atom o JSON — o anche solo l'indirizzo di un sito. Aggrega troverà il feed per te."
+msgid "Paste an RSS, Atom or JSON feed — or just a website address or YouTube channel. Aggrega will find the feed for you."
+msgstr "Incolla un feed RSS, Atom o JSON — o anche solo l'indirizzo di un sito o di un canale YouTube. Aggrega troverà il feed per te."
 
 msgid "e.g. theverge.com or https://example.com/feed.xml"
 msgstr "es. theverge.com o https://example.com/feed.xml"

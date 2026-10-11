@@ -93,11 +93,14 @@ fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
         .map(|l| l.href.clone())
         .or_else(|| e.id.starts_with("http").then(|| e.id.clone()))?;
 
+    // YouTube and similar feeds only carry plain text in media:description.
+    let media_html = media_description_html(e);
     let summary_html = e
         .summary
         .as_ref()
         .map(|s| s.content.as_str())
         .or_else(|| e.content.as_ref().and_then(|c| c.body.as_deref()))
+        .or(media_html.as_deref())
         .unwrap_or("");
     let content_html = e
         .content
@@ -159,6 +162,29 @@ fn convert_entry(e: &Entry, now: i64) -> Option<NewArticle> {
         published,
         body,
     })
+}
+
+/// The first non-empty `media:description` as HTML: the text is escaped,
+/// blank lines become paragraphs and single newlines `<br>`.
+fn media_description_html(e: &Entry) -> Option<String> {
+    let text = e
+        .media
+        .iter()
+        .filter_map(|m| m.description.as_ref())
+        .map(|d| d.content.replace("\r\n", "\n"))
+        .find(|d| !d.trim().is_empty())?;
+    let html = text
+        .split("\n\n")
+        .map(|chunk| chunk.trim())
+        .filter(|chunk| !chunk.is_empty())
+        .map(|chunk| {
+            format!(
+                "<p>{}</p>",
+                html_escape::encode_text(chunk).replace('\n', "<br>")
+            )
+        })
+        .collect::<String>();
+    Some(html)
 }
 
 /// The entry's thumbnail: a media thumbnail or image, then an image
@@ -273,6 +299,15 @@ mod tests {
                 assert!(!a.title.is_empty() && !a.link.is_empty(), "{name}: {a:?}");
             }
         }
+    }
+
+    #[test]
+    fn youtube_media_description_fills_snippet_and_body() {
+        let a = first_article("atom_mediarss_youtube_1.xml");
+        assert!(a.snippet.contains("Check Out Weathered on PBS Terra"));
+        let paragraph = "Check Out Weathered on PBS Terra \
+            https://www.youtube.com/watch?v=znSN7ZFIaOg&ab_channel=PBSTerra";
+        assert!(reader::decode(&a.body).contains(&reader::Block::Paragraph(paragraph.into())));
     }
 
     #[test]
