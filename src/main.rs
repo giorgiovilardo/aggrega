@@ -53,6 +53,7 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_import_sources(|| with_app(|a| a.import_sources()));
     ui.on_export_sources(|| with_app(|a| a.export_sources()));
     ui.on_step_refresh_interval(|longer| with_app(|a| a.step_refresh_interval(longer)));
+    ui.on_zoom(|step| with_app(|a| a.zoom(step)));
     ui.on_theme_changed(|dark| with_app(|a| a.save_theme(dark)));
     ui.on_language_changed(|code| with_app(|a| a.change_language(code)));
     ui.on_sync_active(|on| with_app(|a| a.sync_active(on)));
@@ -96,6 +97,11 @@ fn main() -> Result<()> {
         with_app(|a| a.tick())
     });
 
+    // The native window is only created once the event loop runs, and creating
+    // it applies the OS scale factor, so the saved zoom must be applied from
+    // inside the loop, not before `run`.
+    slint::invoke_from_event_loop(|| with_app(|a| a.restore_zoom()))
+        .context("couldn't queue the saved zoom")?;
     drop(app);
     ui.run()?;
     Ok(())

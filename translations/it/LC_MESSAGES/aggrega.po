@@ -535,3 +535,33 @@ msgid "({n} unread)"
 msgid_plural "({n} unread)"
 msgstr[0] "({n} da leggere)"
 msgstr[1] "({n} da leggere)"
+
+msgid "UI"
+msgstr "Interfaccia"
+
+msgid "Make it easier on the eyes"
+msgstr "Più comodo per gli occhi"
+
+msgid "Scale the text and layout of the whole window. You can also press Ctrl or Cmd with + and - anywhere in Aggrega, and 0 to go back to 100%."
+msgstr "Ingrandisce o riduce testo e impaginazione dell'intera finestra. Puoi anche premere Ctrl o Cmd con + e - in qualsiasi punto di Aggrega, e 0 per tornare al 100%."
+
+msgid "From 80% to 160%."
+msgstr "Dall'80% al 160%."
+
+msgid "{}%"
+msgstr "{}%"
+
+msgid "Zoom out"
+msgstr "Riduci zoom"
+
+msgid "Zoom in"
+msgstr "Aumenta zoom"
+
+msgid "Zoom {} percent"
+msgstr "Zoom {} percento"
+
+msgid "Reset"
+msgstr "Ripristina"
+
+msgid "Couldn't save the zoom level"
+msgstr "Impossibile salvare il livello di zoom"

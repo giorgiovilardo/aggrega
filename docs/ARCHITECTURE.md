@@ -29,7 +29,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
 | `src/pool.rs` | `par_map` / `par_for_each`, a tiny scoped thread pool for short blocking jobs |
 | `src/opml.rs` | OPML as plain data: `parse` reads the feeds out of any reader's export (nested folders flattened, duplicates dropped, via `html::tokenize`) and `write` produces an OPML 2.0 document. The import itself (subscribing in parallel, then storing) lives in `app.rs` |
-| `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes. For sync, `snapshot_to` (`VACUUM INTO`) and `replace_with` (SQLite's backup API, in one step, keeping the local theme, refresh interval and language) |
+| `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes. For sync, `snapshot_to` (`VACUUM INTO`) and `replace_with` (SQLite's backup API, in one step, keeping the local theme, refresh interval, language and zoom) |
 | `src/sync.rs` | LAN sync, std networking only. A `Session` (alive only while the Sync tab is on screen) broadcasts a UDP beacon, collects the beacons of other copies, and serves database snapshots over TCP. `info` and `pull` are the client side |
 | `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns a `SharedPixelBuffer`. Also loads reader pictures, shrunk to fit the column (not cached) |
 | `src/reader.rs` | Reader view content: HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
@@ -39,7 +39,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` build on them, `fetch` adds HTTP on top of `feed`, and `app` uses everything. `db` needs only `feed`'s data types, plus `fetch::is_unreachable` to tell an offline refresh from a broken source.
 | `ui/theme.slint` | `Theme` global with every colour token, switched by `Theme.dark`, plus the `Icons` global |
 | `ui/app.slint` | `AppWindow`: responsive layout, header, list, toast, keyboard shortcuts, and the public API used from Rust |
-| `ui/settings.slint` | `SettingsDialog`: a large modal with a vertical tab rail (Import & export, Sync, Updates, About) and the selected tab's pane, opened from the gear in the sidebar footer or `Ctrl+,`. About shows the version, copyright, license, project links, this profile's data paths and the third-party credits, including the `AboutSlint` widget the Slint Royalty-free License requires |
+| `ui/settings.slint` | `SettingsDialog`: a large modal with a vertical tab rail (Import & export, Sync, Updates, UI, About) and the selected tab's pane, opened from the gear in the sidebar footer or `Ctrl+,`. The UI tab sets the zoom (80% to 160%); `Ctrl/Cmd` with `+`, `-` and `0` does the same from anywhere, including with Settings open. About shows the version, copyright, license, project links, this profile's data paths and the third-party credits, including the `AboutSlint` widget the Slint Royalty-free License requires |
 | `ui/reader.slint` | `ReaderView`: toolbar, headline, lead photo and one `BlockView` per content block, in a scrollable column |
 
 ## Threading model
@@ -54,6 +54,8 @@ Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` bu
 **Startup:** the app opens the DB, applies the saved theme, and loads cached feeds and articles, so content shows immediately. Then it starts a background refresh.
 
 **Refresh:** the app reads a `FeedJob` (id, url, etag, last_modified) for each feed. Up to 8 threads fetch them in parallel with `If-None-Match` / `If-Modified-Since` headers. A `304` response is recorded without parsing. New entries are inserted with `ON CONFLICT(feed_id, guid) DO NOTHING`, so an existing article never shows up as new again. Per-feed errors go into `feeds.last_error`, and the sidebar shows them as a red icon. When the refresh ends, the app reloads the models and shows a toast.
+
+**Zoom:** `App::zoom` steps through `ZOOM_STEPS` (80 to 160 percent) and `App::set_zoom` scales the window by dispatching `WindowEvent::ScaleFactorChanged`, so everything reflows like a high-DPI change. The scale factor the window system reports is kept as the base, so a reset from the system (a monitor change) is respected. The level is saved as the local setting `zoom` and applied by `App::restore_zoom`, queued on the event loop right after startup, since the window system only reports the monitor's scale once the native window exists and that would overwrite an earlier zoom.
 
 **Background refresh:** `App` owns a repeating `slint::Timer` (`auto_refresh`) set to `settings.refresh_interval` minutes (default 20, stepped between 5 and 120 in Settings › Updates). It restarts whenever a refresh ends, so the interval counts from the last refresh, manual or not. When it fires it starts an ordinary refresh, unless one is already running or the last refresh found the app offline; then it waits for the user to refresh by hand. A background refresh only shows a toast when it found new articles.
 
@@ -77,7 +79,7 @@ Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` bu
 feeds(id, url UNIQUE, title, site_url, etag, last_modified, last_fetched, last_error, added_at)
 articles(id, feed_id → feeds ON DELETE CASCADE, guid, title, link, snippet, image_url,
          published, fetched_at, read, body, UNIQUE(feed_id, guid))
-settings(key PRIMARY KEY, value)            -- theme, language, last_refresh, refresh_interval
+settings(key PRIMARY KEY, value)            -- theme, language, last_refresh, refresh_interval, zoom
 ```
 
 Indexes cover the hot queries: `articles(published DESC)`, `articles(feed_id, published DESC)` and `articles(feed_id, read)`. For the list, articles keep a plain-text snippet of at most 280 chars. For the reader, `body` holds the article as simplified text blocks, one per line (`p `, `h `, `q `, `l `, `c `, `i ` + text, with `\` and newlines escaped), not HTML, which keeps it compact. Version 2 added `body`; it is `NULL` for older rows, which makes the reader fetch the page. Read articles older than 90 days are pruned after each refresh.

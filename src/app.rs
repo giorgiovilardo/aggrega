@@ -33,6 +33,10 @@ const LEAVE_ANIMATION: Duration = Duration::from_millis(560);
 const REFRESH_STEPS: [i64; 9] = [5, 10, 15, 20, 30, 45, 60, 90, 120];
 const DEFAULT_REFRESH_MINUTES: i64 = 20;
 
+/// Zoom levels in percent, stepped through by Ctrl/Cmd + and -.
+const ZOOM_STEPS: [i64; 7] = [80, 90, 100, 110, 125, 140, 160];
+const DEFAULT_ZOOM: i64 = 100;
+
 thread_local! {
     /// The application state lives on the UI thread; worker threads reach it
     /// through `slint::invoke_from_event_loop` + `with_app`.
@@ -136,6 +140,11 @@ pub struct App {
     sync_pending: RefCell<Option<(SocketAddr, String)>>,
     /// A pull is replacing the database.
     pulling: Cell<bool>,
+    /// Zoom in percent, saved as the local setting `zoom`.
+    zoom: Cell<i64>,
+    /// The scale factor last dispatched for zoom, to tell our own changes
+    /// from the window system resetting it (say, on a monitor change).
+    applied_scale: Cell<Option<f32>>,
 }
 
 impl App {
@@ -160,6 +169,11 @@ impl App {
             .and_then(|v| v.parse().ok())
             .map_or(DEFAULT_REFRESH_MINUTES, clamp_refresh_minutes);
         ui.set_refresh_minutes(refresh_minutes as i32);
+        let zoom = store
+            .setting("zoom")?
+            .and_then(|v| v.parse().ok())
+            .map_or(DEFAULT_ZOOM, clamp_zoom);
+        ui.set_zoom_percent(zoom as i32);
         // English unless another language was picked.
         let lang = store
             .setting("language")?
@@ -196,6 +210,8 @@ impl App {
             sync_peers,
             sync_pending: RefCell::default(),
             pulling: Cell::new(false),
+            zoom: Cell::new(zoom),
+            applied_scale: Cell::new(None),
         });
         APP.with(|cell| {
             let _ = cell.set(app.clone());
@@ -1198,6 +1214,60 @@ impl App {
         }
     }
 
+    /// Ctrl/Cmd + and -: the next zoom level in `step`'s direction, or the
+    /// default for 0 (Ctrl/Cmd + 0).
+    pub fn zoom(&self, step: i32) {
+        let next = next_zoom(self.zoom.get(), step);
+        if next != self.zoom.get() {
+            self.set_zoom(next);
+        }
+    }
+
+    /// Scales the whole window to `percent`. Zoom is the window's scale
+    /// factor times this, so everything reflows like on a high-DPI screen.
+    fn set_zoom(&self, percent: i64) {
+        let ui = self.ui();
+        let window = ui.window();
+        let current = window.scale_factor();
+        let base = match self.applied_scale.get() {
+            // Still our last scale: undo the old zoom to find the system one.
+            Some(applied) if (current - applied).abs() < 1e-3 => {
+                current / (self.zoom.get() as f32 / 100.)
+            }
+            // Reset by the window system (say, moved to another monitor).
+            _ => current,
+        };
+        let scale = base * percent as f32 / 100.;
+        let physical = window.size();
+        window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+            scale_factor: scale,
+        });
+        // The native window keeps its physical size, so its logical size
+        // shrinks as the scale grows. Say so, or the backend takes the stale
+        // logical size for a resize request and grows the window instead of
+        // reflowing the content.
+        window.dispatch_event(slint::platform::WindowEvent::Resized {
+            size: physical.to_logical(scale),
+        });
+        self.applied_scale.set(Some(scale));
+        self.zoom.set(percent);
+        ui.set_zoom_percent(percent as i32);
+        if let Err(e) = self.store.set_setting("zoom", &percent.to_string()) {
+            self.report(tr!("Couldn't save the zoom level"), e);
+        }
+    }
+
+    /// Applies the saved zoom at startup. Runs from the event loop right after
+    /// launch (queued in `main`): the window system only reports the monitor's
+    /// scale factor once the native window exists, and that would overwrite an
+    /// earlier zoom.
+    pub fn restore_zoom(&self) {
+        let percent = self.zoom.get();
+        if percent != DEFAULT_ZOOM {
+            self.set_zoom(percent);
+        }
+    }
+
     /// The language switch: applies `code` at once, everywhere, and saves it.
     pub fn change_language(&self, code: SharedString) {
         let Some(lang) = Lang::from_code(&code) else {
@@ -1277,6 +1347,29 @@ fn minutes(n: i64) -> Duration {
 
 fn clamp_refresh_minutes(n: i64) -> i64 {
     n.clamp(REFRESH_STEPS[0], REFRESH_STEPS[REFRESH_STEPS.len() - 1])
+}
+
+fn clamp_zoom(n: i64) -> i64 {
+    n.clamp(ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.len() - 1])
+}
+
+/// The zoom level one step in (`step` > 0) or out (`step` < 0) from
+/// `current`, or back to the default for `step` == 0. Stays put at the ends.
+fn next_zoom(current: i64, step: i32) -> i64 {
+    match step.cmp(&0) {
+        std::cmp::Ordering::Greater => ZOOM_STEPS
+            .iter()
+            .copied()
+            .find(|&z| z > current)
+            .unwrap_or(clamp_zoom(current)),
+        std::cmp::Ordering::Less => ZOOM_STEPS
+            .iter()
+            .rev()
+            .copied()
+            .find(|&z| z < current)
+            .unwrap_or(clamp_zoom(current)),
+        std::cmp::Ordering::Equal => DEFAULT_ZOOM,
+    }
 }
 
 fn new_articles(n: usize) -> String {
@@ -1804,6 +1897,103 @@ mod tests {
         // Saved values outside the range are pulled back into it.
         assert_eq!(clamp_refresh_minutes(1), 5);
         assert_eq!(clamp_refresh_minutes(600), 120);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn zoom_steps_between_limits() {
+        assert_eq!(next_zoom(100, 1), 110);
+        assert_eq!(next_zoom(100, -1), 90);
+        assert_eq!(next_zoom(160, 1), 160, "at most 160%");
+        assert_eq!(next_zoom(80, -1), 80, "at least 80%");
+        assert_eq!(next_zoom(125, 0), DEFAULT_ZOOM, "Ctrl+0 resets");
+        assert_eq!(
+            next_zoom(85, 1),
+            90,
+            "off-step values move to the next step"
+        );
+        assert_eq!(clamp_zoom(50), 80);
+        assert_eq!(clamp_zoom(500), 160);
+        assert_eq!(clamp_zoom(125), 125);
+    }
+
+    /// Ctrl (or Cmd) held while `key` is pressed. Slint tracks modifiers from
+    /// the modifier keys' own events.
+    fn chord(ui: &AppWindow, modifier: Key, key: &str) {
+        let modifier: SharedString = modifier.into();
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: modifier.clone(),
+        });
+        press(ui, key);
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: modifier });
+    }
+
+    #[test]
+    fn zoom_scales_the_window_and_is_saved() {
+        let (ui, app, dir) = start("zoom");
+        let button = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label} button"))
+        };
+        let shows = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .is_some()
+        };
+        let saved = || app.store.setting("zoom").unwrap();
+        let base = ui.window().scale_factor();
+        let scale = || ui.window().scale_factor();
+        assert_eq!(ui.get_zoom_percent(), 100, "default");
+        assert_eq!(saved(), None);
+
+        let column = ui.get_column_width();
+        chord(&ui, Key::Control, "=");
+        assert_eq!(ui.get_zoom_percent(), 110);
+        assert!((scale() - base * 1.1).abs() < 1e-3);
+        assert_eq!(saved().as_deref(), Some("110"));
+        assert!(
+            ui.get_column_width() < column,
+            "the window keeps its size, so the content reflows into less room"
+        );
+
+        chord(&ui, Key::Control, "0");
+        assert_eq!(ui.get_zoom_percent(), 100);
+        assert!((scale() - base).abs() < 1e-3, "back to the system scale");
+        assert_eq!(saved().as_deref(), Some("100"));
+
+        chord(&ui, Key::Control, "-");
+        assert_eq!(ui.get_zoom_percent(), 90);
+        assert!((scale() - base * 0.9).abs() < 1e-3);
+        assert!(!ui.get_settings_open());
+
+        // Works with Settings open too.
+        button("Settings").invoke_accessible_default_action();
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        button("UI").invoke_accessible_default_action();
+        assert!(shows("Make it easier on the eyes"));
+        assert!(shows("Zoom 90 percent"));
+        button("Zoom in").invoke_accessible_default_action();
+        assert!(shows("Zoom 100 percent"));
+        assert_eq!(saved().as_deref(), Some("100"));
+        chord(&ui, Key::Control, "=");
+        assert_eq!(ui.get_zoom_percent(), 110);
+        assert!(shows("Zoom 110 percent"));
+        assert!(ui.get_settings_open());
+        press(&ui, Key::Escape);
+        assert!(!ui.get_settings_open());
+
+        // The window system resets the scale (say, the window moved to another
+        // monitor): zoom applies to the new scale rather than compounding.
+        ui.window()
+            .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 2.0 });
+        chord(&ui, Key::Control, "-");
+        assert_eq!(ui.get_zoom_percent(), 100);
+        assert!(
+            (scale() - 2.0).abs() < 1e-3,
+            "2.0 at 100%, not 2.0 * 1.1 * 0.9"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

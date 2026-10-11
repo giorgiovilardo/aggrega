@@ -65,6 +65,8 @@ export component AppWindow inherits Window {
     in property <bool> sync-note-error;
     // Settings › Updates: minutes between background refreshes.
     in property <int> refresh-minutes;
+    // Zoom in percent (80 to 160), applied as the window's scale factor.
+    in property <int> zoom-percent: 100;
     // Interface language code ("en", "it"), set from Rust.
     in property <string> language: "en";
 
@@ -113,6 +115,8 @@ export component AppWindow inherits Window {
     callback sync-confirmed();
     // Settings › Updates stepper: true for a longer interval.
     callback step-refresh-interval(bool);
+    // +1 zooms in, -1 out, 0 back to 100%.
+    callback zoom(int);
 
     changed sync-open => { root.sync-active(self.sync-open); }
 
@@ -194,6 +198,22 @@ export component AppWindow inherits Window {
             if (root.intro-running) {
                 root.intro-skipped = true;
                 return accept;
+            }
+            // Zoom also works with Settings open. `control` is Cmd on macOS
+            // (Slint remaps it), like every other shortcut here.
+            if (event.modifiers.control) {
+                if (event.text == "=" || event.text == "+") {
+                    root.zoom(1);
+                    return accept;
+                }
+                if (event.text == "-") {
+                    root.zoom(-1);
+                    return accept;
+                }
+                if (event.text == "0") {
+                    root.zoom(0);
+                    return accept;
+                }
             }
             // The settings modal doesn't take focus; keep keys from reaching
             // the list or reader underneath it.
@@ -566,6 +586,7 @@ export component AppWindow inherits Window {
             sync-note: root.sync-note;
             sync-note-error: root.sync-note-error;
             refresh-minutes: root.refresh-minutes;
+            zoom-percent: root.zoom-percent;
             closed => { keys.focus(); }
             sync-connect(address) => { root.sync-connect(address); }
             import-sources => { root.import-sources(); }
@@ -573,6 +594,7 @@ export component AppWindow inherits Window {
             open-link(url) => { root.open-link(url); }
             open-data-folder(thumbs) => { root.open-data-folder(thumbs); }
             step-refresh-interval(longer) => { root.step-refresh-interval(longer); }
+            zoom(step) => { root.zoom(step); }
         }
 
         // Above the settings modal it's opened from.
