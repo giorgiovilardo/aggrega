@@ -10,3 +10,7 @@
 
 # macOS bundle output (packaging/macos/bundle.sh)
 /dist
+
+# Local-only files
+CLAUDE.local.md
+
