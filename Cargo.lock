@@ -148,6 +148,7 @@ dependencies = [
  "rusqlite",
  "slint",
  "slint-build",
+ "tempfile",
  "ureq",
  "url",
 ]

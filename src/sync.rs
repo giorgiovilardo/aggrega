@@ -440,11 +440,11 @@ mod tests {
     use crate::feed::{Fetched, NewArticle};
     use std::sync::mpsc;
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("aggrega-sync-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("aggrega-sync-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn feed(n: usize) -> Fetched {
@@ -514,11 +514,11 @@ mod tests {
     #[test]
     fn pulls_another_database_over_tcp() -> Result<()> {
         let dir = temp_dir("pull");
-        let theirs = dir.join("theirs.db");
+        let theirs = dir.path().join("theirs.db");
         let store = Store::open(&theirs)?;
         store.add_feed("https://x.org/rss", &feed(4))?;
         store.mark_all_read(None)?;
-        let ours = dir.join("ours.db");
+        let ours = dir.path().join("ours.db");
         Store::open(&ours)?.add_feed("https://y.org/rss", &feed(1))?;
 
         let session = Session::start(&loopback(), theirs, "Desk".into(), |_| {});
@@ -533,7 +533,7 @@ mod tests {
         let now = pull(addr, &ours)?;
         assert_eq!(now, store.stats()?);
         assert_eq!(Store::open(&ours)?.sources()?, store.sources()?);
-        let leftovers = std::fs::read_dir(&dir)?
+        let leftovers = std::fs::read_dir(dir.path())?
             .filter(|e| {
                 let name = e.as_ref().unwrap().file_name();
                 name.to_string_lossy().contains("incoming")
@@ -545,14 +545,13 @@ mod tests {
         drop(session);
         std::thread::sleep(POLL * 3);
         assert!(info(addr).is_err());
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
     #[test]
     fn hears_beacons_but_not_its_own() {
         let dir = temp_dir("beacon");
-        let db = dir.join("a.db");
+        let db = dir.path().join("a.db");
         Store::open(&db).unwrap();
         let free = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let config = Config {
@@ -583,13 +582,12 @@ mod tests {
             }]
         );
         drop(session);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn refuses_other_protocols() -> Result<()> {
         let dir = temp_dir("protocol");
-        let db = dir.join("a.db");
+        let db = dir.path().join("a.db");
         Store::open(&db)?;
         let session = Session::start(&loopback(), db, "Me".into(), |_| {});
         let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), session.port.unwrap());
@@ -599,7 +597,6 @@ mod tests {
         BufReader::new(stream).read_line(&mut line)?;
         assert!(line.starts_with("ERR"), "{line}");
         drop(session);
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 }

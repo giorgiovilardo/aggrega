@@ -497,16 +497,17 @@ mod tests {
         }
     }
 
-    fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("aggrega-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("aggrega-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     #[test]
     fn reader_body_is_stored_and_updatable() -> Result<()> {
         let dir = temp_dir("reader");
-        let store = Store::open(&dir.join("t.db"))?;
+        let store = Store::open(&dir.path().join("t.db"))?;
         let (feed, _) = store.add_feed("https://x.org/rss", &sample(2))?;
         let id = store.articles(Some(feed), false, 1)?[0].id;
 
@@ -520,14 +521,13 @@ mod tests {
         let a = store.reader_article(id)?.unwrap();
         assert_eq!(a.body.as_deref(), Some("p Full page\n"));
         assert!(store.reader_article(9999)?.is_none());
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
     #[test]
     fn migrates_v1_databases() -> Result<()> {
         let dir = temp_dir("migrate");
-        let path = dir.join("t.db");
+        let path = dir.path().join("t.db");
         {
             // A database as the first release created it.
             let conn = Connection::open(&path)?;
@@ -556,14 +556,13 @@ mod tests {
         drop(store);
         // Opening again is a no-op.
         Store::open(&path)?;
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
     #[test]
     fn add_list_read_remove() -> Result<()> {
         let dir = temp_dir("test");
-        let store = Store::open(&dir.join("t.db"))?;
+        let store = Store::open(&dir.path().join("t.db"))?;
         let (id, n) = store.add_feed("https://x.org/rss", &sample(3))?;
         assert_eq!(n, 3);
         assert!(store.add_feed("https://x.org/rss", &sample(1)).is_err());
@@ -590,14 +589,13 @@ mod tests {
 
         store.remove_feed(id)?;
         assert!(store.articles(None, false, 10)?.is_empty());
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
     #[test]
     fn replaces_everything_from_a_snapshot() -> Result<()> {
         let dir = temp_dir("replace");
-        let theirs = Store::open(&dir.join("theirs.db"))?;
+        let theirs = Store::open(&dir.path().join("theirs.db"))?;
         let (feed, _) = theirs.add_feed("https://x.org/rss", &sample(3))?;
         let first = theirs.articles(Some(feed), false, 1)?[0].id;
         theirs.set_read(first, true)?;
@@ -612,14 +610,14 @@ mod tests {
                 unread: 2
             }
         );
-        let snapshot = dir.join("snapshot.db");
+        let snapshot = dir.path().join("snapshot.db");
         theirs.snapshot_to(&snapshot)?;
 
-        let mut ours = Store::open(&dir.join("ours.db"))?;
+        let mut ours = Store::open(&dir.path().join("ours.db"))?;
         ours.add_feed("https://y.org/feed", &sample(5))?;
         ours.set_setting("theme", "light")?;
         // Another connection, like the UI thread's, sees the new contents.
-        let ui = Store::open(&dir.join("ours.db"))?;
+        let ui = Store::open(&dir.path().join("ours.db"))?;
         ours.replace_with(&snapshot)?;
         assert_eq!(ui.stats()?, theirs.stats()?);
         assert_eq!(ui.sources()?, theirs.sources()?);
@@ -635,42 +633,40 @@ mod tests {
         // Still writable through either connection.
         ui.mark_all_read(None)?;
         assert_eq!(ours.stats()?.unread, 0);
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
     #[test]
     fn refuses_snapshots_it_cannot_use() -> Result<()> {
         let dir = temp_dir("refuse");
-        let mut ours = Store::open(&dir.join("ours.db"))?;
+        let mut ours = Store::open(&dir.path().join("ours.db"))?;
         ours.add_feed("https://y.org/feed", &sample(2))?;
         let before = ours.stats()?;
 
-        let junk = dir.join("junk.db");
+        let junk = dir.path().join("junk.db");
         std::fs::write(&junk, b"definitely not sqlite, just some bytes here")?;
         assert!(ours.replace_with(&junk).is_err());
 
-        let newer = dir.join("newer.db");
+        let newer = dir.path().join("newer.db");
         Store::open(&newer)?
             .conn
             .execute_batch("PRAGMA user_version = 99")?;
         let err = ours.replace_with(&newer).unwrap_err().to_string();
         assert!(err.contains("newer version"), "{err}");
 
-        let other = dir.join("other.db");
+        let other = dir.path().join("other.db");
         Connection::open(&other)?
             .execute_batch("CREATE TABLE notes (x); PRAGMA user_version = 1;")?;
         assert!(ours.replace_with(&other).is_err());
 
         assert_eq!(ours.stats()?, before, "nothing was touched");
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
     #[test]
     fn lists_sources_for_export() -> Result<()> {
         let dir = temp_dir("sources");
-        let store = Store::open(&dir.join("t.db"))?;
+        let store = Store::open(&dir.path().join("t.db"))?;
         let mut zine = sample(0);
         zine.title = "a zine".into();
         zine.site_url = Some("https://y.org/".into());
@@ -691,7 +687,6 @@ mod tests {
                 },
             ]
         );
-        std::fs::remove_dir_all(&dir)?;
         Ok(())
     }
 }

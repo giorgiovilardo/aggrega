@@ -1390,11 +1390,13 @@ mod tests {
 
     /// A window and app over a fresh database holding one feed:
     /// "Story 1" (full text in the feed) and "Story 0" (summary only).
-    fn start(name: &str) -> (AppWindow, Rc<App>, PathBuf) {
+    fn start(name: &str) -> (AppWindow, Rc<App>, tempfile::TempDir) {
         testing::init_no_event_loop();
-        let dir = std::env::temp_dir().join(format!("aggrega-ui-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let paths = Paths::in_dir(&dir).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("aggrega-ui-{name}-"))
+            .tempdir()
+            .unwrap();
+        let paths = Paths::in_dir(dir.path()).unwrap();
         let store = Store::open(&paths.db).unwrap();
         store
             .add_feed(
@@ -1468,7 +1470,7 @@ mod tests {
 
     #[test]
     fn layout_adapts_to_window_width() {
-        let (ui, _app, dir) = start("layout");
+        let (ui, _app, _dir) = start("layout");
 
         resize(&ui, 1400., 900.);
         assert!(!ui.get_compact());
@@ -1491,12 +1493,11 @@ mod tests {
         // 800 - 224 sidebar - 40 (tighter margins below 640px)
         assert_eq!(ui.get_column_width(), 536.);
         assert_eq!(ui.get_reader_column_width(), 536.);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn opening_an_article_shows_the_feed_text() {
-        let (ui, app, dir) = start("open");
+        let (ui, app, _dir) = start("open");
         assert!(!ui.get_reader_open());
         let row = row_of(&app, "Story 1");
         app.open_article(row);
@@ -1522,12 +1523,11 @@ mod tests {
         let id = info.id as i64;
         assert!(read_in_db(&app, id));
         assert!(app.articles.row_data(row).unwrap().read);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn summaries_are_replaced_by_the_full_page() {
-        let (ui, app, dir) = start("fetch");
+        let (ui, app, _dir) = start("fetch");
         app.open_article(row_of(&app, "Story 0"));
         let id = ui.get_reader().id as i64;
         // Only a teaser in the feed: show it while the page loads.
@@ -1553,12 +1553,11 @@ mod tests {
         // Saved, so it opens instantly (and offline) next time.
         let stored = app.store.reader_article(id).unwrap().unwrap().body.unwrap();
         assert_eq!(reader::decode(&stored), page);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn failed_page_loads_keep_the_summary() {
-        let (ui, app, dir) = start("offline");
+        let (ui, app, _dir) = start("offline");
         app.open_article(row_of(&app, "Story 0"));
         let id = ui.get_reader().id as i64;
 
@@ -1571,12 +1570,11 @@ mod tests {
         // A page with less text than the feed doesn't replace it.
         app.page_ready(id, Ok(vec![]));
         assert_eq!(kinds(&app), vec![BlockKind::Paragraph]);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn late_results_for_another_article_are_ignored() {
-        let (ui, app, dir) = start("stale");
+        let (ui, app, _dir) = start("stale");
         app.open_article(row_of(&app, "Story 0"));
         let teaser_id = ui.get_reader().id as i64;
         app.open_article(row_of(&app, "Story 1"));
@@ -1585,12 +1583,11 @@ mod tests {
         app.picture_ready(teaser_id, "http://127.0.0.1:9/pic.png", None);
         assert_eq!(ui.get_reader().title, "Story 1");
         assert_eq!(app.reader_blocks.row_count(), 14, "Story 1 is untouched");
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn pictures_fill_in_or_disappear() {
-        let (_ui, app, dir) = start("pictures");
+        let (_ui, app, _dir) = start("pictures");
         app.open_article(row_of(&app, "Story 1"));
         let id = app.reader_id.get().unwrap();
         let url = "http://127.0.0.1:9/pic.png";
@@ -1608,12 +1605,11 @@ mod tests {
 
         app.picture_ready(id, url, None);
         assert_eq!(app.reader_blocks.row_count(), last, "broken image removed");
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn toggling_read_from_the_reader() {
-        let (ui, app, dir) = start("toggle");
+        let (ui, app, _dir) = start("toggle");
         // "All" view, so the row stays in the list.
         ui.set_unread_only(false);
         app.reload_articles();
@@ -1629,12 +1625,11 @@ mod tests {
         app.reader_toggle_read();
         assert!(ui.get_reader().read);
         assert!(read_in_db(&app, id));
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn escape_and_back_button_close_the_reader() {
-        let (ui, app, dir) = start("close");
+        let (ui, app, _dir) = start("close");
         app.open_article(row_of(&app, "Story 1"));
         press(&ui, Key::Escape);
         assert!(!ui.get_reader_open());
@@ -1648,12 +1643,11 @@ mod tests {
             .expect("back button");
         back.invoke_accessible_default_action();
         assert!(!ui.get_reader_open());
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn reader_toolbar_buttons_are_wired() {
-        let (ui, app, dir) = start("toolbar");
+        let (ui, app, _dir) = start("toolbar");
         ui.set_unread_only(false);
         app.reload_articles();
         app.open_article(row_of(&app, "Story 1"));
@@ -1669,7 +1663,6 @@ mod tests {
                 .next()
                 .is_some()
         );
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1701,7 +1694,7 @@ mod tests {
         button("About").invoke_accessible_default_action();
         assert!(shows(env!("CARGO_PKG_VERSION")));
         assert!(shows(env!("CARGO_PKG_REPOSITORY")));
-        assert!(shows(dir.join("aggrega.db").to_str().unwrap()));
+        assert!(shows(dir.path().join("aggrega.db").to_str().unwrap()));
         assert!(shows("License: Read"), "links to the license text");
         assert!(!shows("Take your edition with you"));
         // Slint Royalty-free License attribution, at the bottom of the pane.
@@ -1720,12 +1713,11 @@ mod tests {
         button("Settings").invoke_accessible_default_action();
         button("Close settings").invoke_accessible_default_action();
         assert!(!ui.get_settings_open());
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn sync_runs_only_while_its_tab_is_open() {
-        let (ui, app, dir) = start("sync-tab");
+        let (ui, app, _dir) = start("sync-tab");
         let button = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
                 .next()
@@ -1760,12 +1752,11 @@ mod tests {
         assert!(running());
         button("Close settings").invoke_accessible_default_action();
         assert!(!running());
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn refresh_interval_steps_between_limits_and_is_saved() {
-        let (ui, app, dir) = start("interval");
+        let (ui, app, _dir) = start("interval");
         let button = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
                 .next()
@@ -1804,12 +1795,11 @@ mod tests {
         // Saved values outside the range are pulled back into it.
         assert_eq!(clamp_refresh_minutes(1), 5);
         assert_eq!(clamp_refresh_minutes(600), 120);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn background_refreshes_skip_offline_and_stay_quiet() {
-        let (ui, app, dir) = start("auto-refresh");
+        let (ui, app, _dir) = start("auto-refresh");
         // The toast slides up from below the window, where it can't be found.
         let toast_shows = |label: &str| {
             testing::mock_elapsed_time(Duration::from_secs(1));
@@ -1845,7 +1835,6 @@ mod tests {
         app.set_refreshing(true);
         app.refresh_done(Ok(nothing));
         assert!(toast_shows("You're up to date"));
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1857,7 +1846,7 @@ mod tests {
                 .is_some()
         };
         // Another computer, following two other sources.
-        let theirs = dir.join("theirs.db");
+        let theirs = dir.path().join("theirs.db");
         let other = Store::open(&theirs).unwrap();
         for url in ["https://a.example/rss", "https://b.example/rss"] {
             let fetched = Fetched {
@@ -1908,12 +1897,11 @@ mod tests {
         assert!(ui.get_sync_note_error());
         assert_eq!(app.feeds.row_count(), 2, "a failed pull changes nothing");
         drop(server);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn sync_explains_what_it_cannot_do() {
-        let (ui, app, dir) = start("sync-errors");
+        let (ui, app, _dir) = start("sync-errors");
         app.sync_active(true);
         let gen_ = app.sync_gen.get();
         app.sync_info_ready(gen_, Err("couldn't reach 10.0.0.9:47812".into()));
@@ -1953,13 +1941,12 @@ mod tests {
             ),
             "1 source and 0 articles"
         );
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn exports_every_source_as_opml() {
         let (_ui, app, dir) = start("export");
-        let path = dir.join("out.opml");
+        let path = dir.path().join("out.opml");
         assert_eq!(app.export_to(&path).unwrap(), 1);
         let sources = opml::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -1970,13 +1957,12 @@ mod tests {
                 html_url: None,
             }]
         );
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn importing_followed_sources_does_nothing() {
         let (ui, app, dir) = start("import-known");
-        let path = dir.join("in.opml");
+        let path = dir.path().join("in.opml");
         std::fs::write(
             &path,
             r#"<opml version="2.0"><body><outline text="Blog" xmlUrl="https://blog.example/rss"/></body></opml>"#,
@@ -1989,12 +1975,11 @@ mod tests {
         app.import_file(&path);
         assert!(!ui.get_importing());
         assert_eq!(app.store.sources().unwrap().len(), 1);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn imports_count_sources_that_fail() {
-        let (_ui, app, dir) = start("import-fail");
+        let (_ui, app, _dir) = start("import-fail");
         let dead = Source {
             title: "Dead".into(),
             xml_url: "http://127.0.0.1:9/feed".into(),
@@ -2003,7 +1988,6 @@ mod tests {
         let s = subscribe_all(&app.agent, &app.paths.db, &[dead]).unwrap();
         assert_eq!((s.added, s.skipped, s.failed + s.unreachable), (0, 0, 1));
         assert_eq!(app.store.sources().unwrap().len(), 1, "nothing stored");
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -2098,7 +2082,7 @@ mod tests {
 
         // Remembered for next time.
         drop(app);
-        let store = Store::open(&dir.join("aggrega.db")).unwrap();
+        let store = Store::open(&dir.path().join("aggrega.db")).unwrap();
         assert_eq!(store.setting("language").unwrap().as_deref(), Some("it"));
 
         with_app(|a| a.change_language("en".into()));
