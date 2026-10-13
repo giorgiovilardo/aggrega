@@ -70,6 +70,15 @@ fn rgba_buffer(img: &image::RgbaImage) -> SharedPixelBuffer<Rgba8Pixel> {
     SharedPixelBuffer::clone_from_slice(img.as_raw(), img.width(), img.height())
 }
 
+/// Switches the language everywhere: Rust strings and Slint's bundled
+/// translations. Needs the window to exist (it registers the bundled ones).
+fn select_language(lang: Lang) {
+    i18n::set_lang(lang);
+    if let Err(e) = slint::select_bundled_translation(lang.code()) {
+        eprintln!("aggrega: couldn't switch the interface language: {e}");
+    }
+}
+
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -203,7 +212,7 @@ impl App {
             .setting("language")?
             .and_then(|code| Lang::from_code(&code))
             .unwrap_or_default();
-        i18n::set_lang(lang);
+        select_language(lang);
         ui.set_language(lang.code().into());
         ui.set_today(i18n::long_date(chrono::Local::now()).into());
         let app = Rc::new(App {
@@ -1301,7 +1310,7 @@ impl App {
         let Some(lang) = Lang::from_code(&code) else {
             return;
         };
-        i18n::set_lang(lang);
+        select_language(lang);
         let ui = self.ui();
         ui.set_language(lang.code().into());
         ui.set_today(i18n::long_date(chrono::Local::now()).into());
