@@ -16,8 +16,9 @@ use slint::{
 };
 
 use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
+use crate::feed::Source;
 use crate::i18n::{self, Lang, tr, trn};
-use crate::opml::{self, Source};
+use crate::opml;
 use crate::reader::{self, Block};
 use crate::{
     AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, SyncPeer, fetch, pool,
