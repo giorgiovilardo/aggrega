@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use url::Url;
 
-use crate::feed::{self, FeedJob, FetchResult, Fetched};
+use crate::feed::{self, FeedJob, FetchResult, Subscription};
 use crate::pool;
 
 const USER_AGENT: &str = concat!(
@@ -148,7 +148,7 @@ pub fn fetch_all(agent: &ureq::Agent, jobs: &[FeedJob]) -> Vec<(i64, FetchResult
 
 /// Turns whatever the user typed into a feed URL, discovering the feed
 /// from an HTML page if needed. Returns the final feed URL and its contents.
-pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> {
+pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription> {
     let url = normalize_url(input)?;
     let resp = get(agent, &url, FEED_ACCEPT, &[], MAX_FEED_BYTES)?;
     if !(200..300).contains(&resp.status) {
@@ -157,7 +157,7 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> 
     if let Ok(mut f) = feed::parse(&url, &resp.body) {
         f.etag = resp.etag;
         f.last_modified = resp.last_modified;
-        return Ok((url, f));
+        return Ok(Subscription { url, fetched: f });
     }
 
     // Not a feed: look for <link rel="alternate"> tags, then common paths.
@@ -191,7 +191,7 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<(String, Fetched)> 
         if let Ok(mut f) = feed::parse(&c, &r.body) {
             f.etag = r.etag;
             f.last_modified = r.last_modified;
-            return Ok((c, f));
+            return Ok(Subscription { url: c, fetched: f });
         }
     }
     bail!("couldn't find an RSS, Atom or JSON feed at that address")

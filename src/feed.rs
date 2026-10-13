@@ -42,6 +42,13 @@ pub struct FeedJob {
     pub last_modified: Option<String>,
 }
 
+/// The feed an address resolved to: its final URL and its contents.
+#[derive(Debug)]
+pub struct Subscription {
+    pub url: String,
+    pub fetched: Fetched,
+}
+
 /// One feed in an OPML file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Source {

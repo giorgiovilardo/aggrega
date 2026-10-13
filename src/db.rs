@@ -52,6 +52,13 @@ pub struct ReaderArticle {
     pub body: Option<String>,
 }
 
+/// What `Store::add_feed` stored for a new subscription.
+#[derive(Debug, Clone, Copy)]
+pub struct AddedFeed {
+    pub id: i64,
+    pub articles: usize,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RefreshSummary {
     pub new_articles: usize,
@@ -210,8 +217,7 @@ impl Store {
     }
 
     /// Inserts a new subscription with its first batch of articles.
-    /// Returns the feed id and how many articles were stored.
-    pub fn add_feed(&self, url: &str, fetched: &Fetched) -> Result<(i64, usize)> {
+    pub fn add_feed(&self, url: &str, fetched: &Fetched) -> Result<AddedFeed> {
         let exists: bool = self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM feeds WHERE url = ?1)",
             [url],
@@ -236,7 +242,7 @@ impl Store {
         let id = tx.last_insert_rowid();
         let n = insert_articles(&tx, id, fetched)?;
         tx.commit()?;
-        Ok((id, n))
+        Ok(AddedFeed { id, articles: n })
     }
 
     pub fn remove_feed(&self, id: i64) -> Result<()> {
@@ -507,7 +513,7 @@ mod tests {
     fn reader_body_is_stored_and_updatable() -> Result<()> {
         let dir = temp_dir("reader");
         let store = Store::open(&dir.path().join("t.db"))?;
-        let (feed, _) = store.add_feed("https://x.org/rss", &sample(2))?;
+        let feed = store.add_feed("https://x.org/rss", &sample(2))?.id;
         let id = store.articles(Some(feed), false, 1)?[0].id;
 
         let a = store.reader_article(id)?.expect("article exists");
@@ -562,8 +568,9 @@ mod tests {
     fn add_list_read_remove() -> Result<()> {
         let dir = temp_dir("test");
         let store = Store::open(&dir.path().join("t.db"))?;
-        let (id, n) = store.add_feed("https://x.org/rss", &sample(3))?;
-        assert_eq!(n, 3);
+        let added = store.add_feed("https://x.org/rss", &sample(3))?;
+        let id = added.id;
+        assert_eq!(added.articles, 3);
         assert!(store.add_feed("https://x.org/rss", &sample(1)).is_err());
 
         let all = store.articles(None, false, 10)?;
@@ -595,7 +602,7 @@ mod tests {
     fn replaces_everything_from_a_snapshot() -> Result<()> {
         let dir = temp_dir("replace");
         let theirs = Store::open(&dir.path().join("theirs.db"))?;
-        let (feed, _) = theirs.add_feed("https://x.org/rss", &sample(3))?;
+        let feed = theirs.add_feed("https://x.org/rss", &sample(3))?.id;
         let first = theirs.articles(Some(feed), false, 1)?[0].id;
         theirs.set_read(first, true)?;
         theirs.set_setting("theme", "dark")?;
