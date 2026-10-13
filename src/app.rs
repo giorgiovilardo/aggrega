@@ -55,6 +55,11 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+fn tint(seed: &str) -> slint::Color {
+    let (r, g, b) = text::tint(seed);
+    slint::Color::from_rgb_u8(r, g, b)
+}
+
 /// `path` for display, with the home directory shortened to `~`.
 fn display_path(path: &Path, home: Option<&Path>) -> String {
     match home.and_then(|h| path.strip_prefix(h).ok()) {
@@ -278,7 +283,7 @@ impl App {
                 title: f.title.as_str().into(),
                 unread: f.unread as i32,
                 letter: text::initial(&f.title).into(),
-                tint: text::tint(&f.title),
+                tint: tint(&f.title),
                 error: f.has_error,
             })
             .collect();
@@ -322,7 +327,7 @@ impl App {
                         thumb: thumb.unwrap_or_default(),
                         image_url,
                         letter: text::initial(&a.feed_title).into(),
-                        tint: text::tint(&a.feed_title),
+                        tint: tint(&a.feed_title),
                         leaving: false,
                     }
                 })
@@ -561,7 +566,7 @@ impl App {
             source: article.feed_title.as_str().into(),
             time: text::ago(article.published, now()).into(),
             host: host_of(&article.link).into(),
-            tint: text::tint(&article.feed_title),
+            tint: tint(&article.feed_title),
             read: true,
             lead: Default::default(),
         });

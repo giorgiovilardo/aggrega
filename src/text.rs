@@ -79,9 +79,8 @@ const TINTS: [(u8, u8, u8); 10] = [
     (0x5c, 0x4a, 0x3a), // walnut
 ];
 
-pub fn tint(seed: &str) -> slint::Color {
-    let (r, g, b) = TINTS[(fnv1a(seed) % TINTS.len() as u64) as usize];
-    slint::Color::from_rgb_u8(r, g, b)
+pub fn tint(seed: &str) -> (u8, u8, u8) {
+    TINTS[(fnv1a(seed) % TINTS.len() as u64) as usize]
 }
 
 #[cfg(test)]
