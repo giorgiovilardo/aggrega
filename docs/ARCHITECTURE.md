@@ -25,7 +25,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/main.rs` | Creates the window, wires every Slint callback to an `App` method, and runs the event loop |
 | `src/app.rs` | `App`, the UI-thread state (models, thumbnail cache, refresh and reader state), every action the UI triggers, and the background work those actions start. Also holds the headless UI tests |
 | `src/fetch.rs` | HTTP only, via `ureq` (blocking, rustls, gzip): conditional feed fetches, subscribing (with feed discovery), article pages and images |
-| `src/feed.rs` | Feeds as plain data (`FeedJob`, `Fetched`, `NewArticle`, `Source`), plus everything done offline with a download: parsing with `feed-rs`, picking each entry's thumbnail, and finding feed links in an HTML page |
+| `src/feed.rs` | Feeds as plain data (`FeedJob`, `Fetched`, `NewArticle`, `Source`, `Subscription`), plus everything done offline with a download: parsing with `feed-rs`, picking each entry's thumbnail, and finding feed links in an HTML page |
 | `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
 | `src/pool.rs` | `par_map` / `par_for_each`, a tiny scoped thread pool for short blocking jobs |
 | `src/opml.rs` | OPML: `parse` reads the feeds (as `feed::Source`) out of any reader's export (nested folders flattened, duplicates dropped, via `html::tokenize`) and `write` produces an OPML 2.0 document. The import itself (subscribing in parallel, then storing) lives in `app.rs` |

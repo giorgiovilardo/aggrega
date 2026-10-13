@@ -55,6 +55,13 @@ pub fn with_app(f: impl FnOnce(&Rc<App>)) {
     });
 }
 
+/// A source the Add dialog stored, as reported back to the UI.
+struct AddedSource {
+    id: i64,
+    title: String,
+    articles: usize,
+}
+
 /// A finished thumbnail, converted to Slint pixels on the worker thread so the
 /// UI thread never copies image data.
 enum ThumbResult {
@@ -892,29 +899,34 @@ impl App {
         let agent = self.agent.clone();
         let db_path = self.paths.db.clone();
         std::thread::spawn(move || {
-            let result = (|| -> Result<(i64, String, usize)> {
-                let (url, fetched) = fetch::subscribe(&agent, &input)?;
-                let (id, n) = Store::open(&db_path)?.add_feed(&url, &fetched)?;
-                Ok((id, fetched.title, n))
+            let result = (|| -> Result<AddedSource> {
+                let sub = fetch::subscribe(&agent, &input)?;
+                let added = Store::open(&db_path)?.add_feed(&sub.url, &sub.fetched)?;
+                Ok(AddedSource {
+                    id: added.id,
+                    title: sub.fetched.title,
+                    articles: added.articles,
+                })
             })()
             .map_err(|e| format!("{e:#}"));
             let _ = slint::invoke_from_event_loop(move || with_app(|app| app.add_done(result)));
         });
     }
 
-    fn add_done(&self, result: Result<(i64, String, usize), String>) {
+    fn add_done(&self, result: Result<AddedSource, String>) {
         let ui = self.ui();
         ui.set_adding(false);
         match result {
-            Ok((id, title, n)) => {
+            Ok(added) => {
+                let n = added.articles;
                 ui.invoke_close_add_dialog();
-                ui.set_selected_feed(id as i32);
+                ui.set_selected_feed(added.id as i32);
                 self.reload_all();
                 self.toast(trn!(
                     n,
                     "Added {}  ·  {n} article",
                     "Added {}  ·  {n} articles",
-                    title
+                    added.title
                 ));
             }
             Err(e) => {
@@ -1446,10 +1458,10 @@ fn subscribe_all(agent: &ureq::Agent, db: &Path, sources: &[Source]) -> Result<I
     let mut summary = ImportSummary::default();
     for result in results {
         match result {
-            Ok((url, _)) if known.contains(&url) => summary.skipped += 1,
-            Ok((url, fetched)) => {
-                store.add_feed(&url, &fetched)?;
-                known.insert(url);
+            Ok(sub) if known.contains(&sub.url) => summary.skipped += 1,
+            Ok(sub) => {
+                store.add_feed(&sub.url, &sub.fetched)?;
+                known.insert(sub.url);
                 summary.added += 1;
             }
             Err(e) if fetch::is_unreachable(&e) => summary.unreachable += 1,
