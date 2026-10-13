@@ -7,8 +7,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
-use crate::feed::{FeedJob, FetchResult, Fetched, Source};
-use crate::fetch::is_unreachable;
+use crate::feed::{FeedJob, FetchResult, Fetched, Source, is_unreachable};
 
 pub const SCHEMA_VERSION: i32 = 2;
 
@@ -587,7 +586,7 @@ mod tests {
 
         // Being offline neither marks the source as broken nor loses articles.
         let before = store.articles(None, false, 10)?.len();
-        let offline = anyhow::Error::new(crate::fetch::Unreachable("offline".into()));
+        let offline = anyhow::Error::new(crate::feed::Unreachable("offline".into()));
         let s = store.apply_refresh(vec![(id, Err(offline))])?;
         assert!(s.offline());
         assert!(!store.feeds()?[0].has_error);

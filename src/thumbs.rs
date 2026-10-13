@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use image::imageops::FilterType;
 
-use crate::{fetch, text};
+use crate::{feed, fetch, text};
 
 /// Thumbnail size in physical pixels (2× the on-screen size for HiDPI).
 const W: u32 = 264;
@@ -44,7 +44,7 @@ pub fn load(agent: &ureq::Agent, dir: &Path, url: &str) -> Thumb {
             Thumb::Ready(rgb)
         }
         // Offline: keep the placeholder and retry on a later reload.
-        Err(e) if fetch::is_unreachable(&e) => Thumb::Unavailable,
+        Err(e) if feed::is_unreachable(&e) => Thumb::Unavailable,
         Err(_) => {
             let _ = std::fs::write(&failed, b"");
             Thumb::Broken
