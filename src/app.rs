@@ -10,7 +10,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{
+    ComponentHandle, Model, ModelRc, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString,
+    VecModel,
+};
 
 use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
 use crate::i18n::{self, Lang, tr, trn};
@@ -49,6 +52,22 @@ pub fn with_app(f: impl FnOnce(&Rc<App>)) {
             f(app)
         }
     });
+}
+
+/// A finished thumbnail, converted to Slint pixels on the worker thread so the
+/// UI thread never copies image data.
+enum ThumbResult {
+    Ready(SharedPixelBuffer<Rgb8Pixel>),
+    Broken,
+    Unavailable,
+}
+
+fn rgb_buffer(img: &image::RgbImage) -> SharedPixelBuffer<Rgb8Pixel> {
+    SharedPixelBuffer::clone_from_slice(img.as_raw(), img.width(), img.height())
+}
+
+fn rgba_buffer(img: &image::RgbaImage) -> SharedPixelBuffer<Rgba8Pixel> {
+    SharedPixelBuffer::clone_from_slice(img.as_raw(), img.width(), img.height())
 }
 
 fn now() -> i64 {
@@ -402,7 +421,11 @@ impl App {
         let urls: Vec<String> = urls.into_iter().map(Into::into).collect();
         std::thread::spawn(move || {
             pool::par_for_each(&urls, 6, |url| {
-                let thumb = thumbs::load(&agent, &dir, url);
+                let thumb = match thumbs::load(&agent, &dir, url) {
+                    thumbs::Thumb::Ready(img) => ThumbResult::Ready(rgb_buffer(&img)),
+                    thumbs::Thumb::Broken => ThumbResult::Broken,
+                    thumbs::Thumb::Unavailable => ThumbResult::Unavailable,
+                };
                 let url = SharedString::from(url.as_str());
                 let _ = slint::invoke_from_event_loop(move || {
                     with_app(|app| app.thumb_ready(url, thumb))
@@ -411,22 +434,22 @@ impl App {
         });
     }
 
-    fn thumb_ready(&self, url: SharedString, thumb: thumbs::Thumb) {
+    fn thumb_ready(&self, url: SharedString, thumb: ThumbResult) {
         self.thumb_pending.borrow_mut().remove(&url);
         let image = match thumb {
-            thumbs::Thumb::Ready(pixels) => {
+            ThumbResult::Ready(pixels) => {
                 let img = slint::Image::from_rgb8(pixels);
                 self.thumb_cache
                     .borrow_mut()
                     .insert(url.clone(), img.clone());
                 Some(img)
             }
-            thumbs::Thumb::Broken => {
+            ThumbResult::Broken => {
                 self.thumb_failed.borrow_mut().insert(url.clone());
                 None
             }
             // Offline: leave the placeholder; the next reload asks again.
-            thumbs::Thumb::Unavailable => return,
+            ThumbResult::Unavailable => return,
         };
         for i in 0..self.articles.row_count() {
             let Some(mut row) = self.articles.row_data(i) else {
@@ -674,7 +697,7 @@ impl App {
         let agent = self.agent.clone();
         std::thread::spawn(move || {
             pool::par_for_each(&urls, 4, |url| {
-                let picture = thumbs::load_picture(&agent, url);
+                let picture = thumbs::load_picture(&agent, url).map(|img| rgba_buffer(&img));
                 let url = url.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     with_app(|app| app.picture_ready(id, &url, picture))
@@ -683,7 +706,7 @@ impl App {
         });
     }
 
-    fn picture_ready(&self, id: i64, url: &str, picture: Option<thumbs::Picture>) {
+    fn picture_ready(&self, id: i64, url: &str, picture: Option<SharedPixelBuffer<Rgba8Pixel>>) {
         if self.reader_id.get() != Some(id) {
             return;
         }
@@ -1695,7 +1718,7 @@ mod tests {
             0
         );
 
-        app.picture_ready(id, url, Some(thumbs::Picture::new(4, 3)));
+        app.picture_ready(id, url, Some(SharedPixelBuffer::new(4, 3)));
         assert_eq!(
             app.reader_blocks.row_data(last).unwrap().image.size().width,
             4
