@@ -1,12 +1,11 @@
 //! Article thumbnails: downloaded once, shrunk, and cached on disk as small JPEGs.
-//! Decoding happens off the UI thread; only ready-to-upload pixel buffers
-//! are handed to Slint.
+//! Downloading, decoding and resizing all happen off the UI thread; results
+//! are returned as plain `image` buffers for the caller to convert.
 
 use std::path::Path;
 
 use anyhow::{Result, bail};
 use image::imageops::FilterType;
-use slint::{Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::{fetch, text};
 
@@ -14,16 +13,13 @@ use crate::{fetch, text};
 const W: u32 = 264;
 const H: u32 = 184;
 
-pub type Pixels = SharedPixelBuffer<Rgb8Pixel>;
-pub type Picture = SharedPixelBuffer<Rgba8Pixel>;
-
 /// Reader images are shrunk to this width (2× the widest reading column).
 const PICTURE_MAX_W: u32 = 1440;
 /// Tall infographics are capped so a single image can't exhaust memory.
 const PICTURE_MAX_H: u32 = 4096;
 
 pub enum Thumb {
-    Ready(Pixels),
+    Ready(image::RgbImage),
     /// The image is unusable; remembered on disk so it isn't retried.
     Broken,
     /// Couldn't download it right now (offline); try again later.
@@ -37,7 +33,7 @@ pub fn load(agent: &ureq::Agent, dir: &Path, url: &str) -> Thumb {
     let failed = dir.join(format!("{key}.none"));
 
     if let Ok(img) = image::open(&jpg) {
-        return Thumb::Ready(to_pixels(img.to_rgb8()));
+        return Thumb::Ready(img.to_rgb8());
     }
     if failed.exists() {
         return Thumb::Broken;
@@ -45,7 +41,7 @@ pub fn load(agent: &ureq::Agent, dir: &Path, url: &str) -> Thumb {
     match fetch_and_shrink(agent, url) {
         Ok(rgb) => {
             let _ = rgb.save_with_format(&jpg, image::ImageFormat::Jpeg);
-            Thumb::Ready(to_pixels(rgb))
+            Thumb::Ready(rgb)
         }
         // Offline: keep the placeholder and retry on a later reload.
         Err(e) if fetch::is_unreachable(&e) => Thumb::Unavailable,
@@ -67,7 +63,7 @@ fn fetch_and_shrink(agent: &ureq::Agent, url: &str) -> Result<image::RgbImage> {
 
 /// Downloads an image for the reader view, shrunk to fit the reading column.
 /// Not cached on disk: reader images are only needed while an article is open.
-pub fn load_picture(agent: &ureq::Agent, url: &str) -> Option<Picture> {
+pub fn load_picture(agent: &ureq::Agent, url: &str) -> Option<image::RgbaImage> {
     let bytes = fetch::download_image(agent, url).ok()?;
     let img = image::load_from_memory(&bytes).ok()?;
     // Icons, spacers and tracking pixels aren't worth a block of their own.
@@ -80,12 +76,7 @@ pub fn load_picture(agent: &ureq::Agent, url: &str) -> Option<Picture> {
     } else {
         img.resize_exact(w, h, FilterType::Triangle)
     };
-    let rgba = img.to_rgba8();
-    Some(SharedPixelBuffer::clone_from_slice(
-        rgba.as_raw(),
-        rgba.width(),
-        rgba.height(),
-    ))
+    Some(img.to_rgba8())
 }
 
 /// Scales `w`×`h` down (never up) to fit within `max_w`×`max_h`, keeping the aspect ratio.
@@ -97,10 +88,6 @@ fn fit(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
         ((w as f64 * scale).round() as u32).max(1),
         ((h as f64 * scale).round() as u32).max(1),
     )
-}
-
-fn to_pixels(rgb: image::RgbImage) -> Pixels {
-    SharedPixelBuffer::clone_from_slice(rgb.as_raw(), rgb.width(), rgb.height())
 }
 
 #[cfg(test)]
