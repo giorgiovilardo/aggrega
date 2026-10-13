@@ -2282,4 +2282,119 @@ mod tests {
         with_app(|a| a.change_language("xx".into()));
         assert_eq!(ui.get_language(), "en");
     }
+
+    /// Home/End: Apple's TextInput ignores them and moves by line with
+    /// Cmd+Left/Right, which Slint reports as Control+Left/Right.
+    fn move_to_line_start(ui: &AppWindow) {
+        if cfg!(target_vendor = "apple") {
+            chord(ui, Key::Control, &SharedString::from(Key::LeftArrow));
+        } else {
+            press(ui, Key::Home);
+        }
+    }
+
+    fn move_to_line_end(ui: &AppWindow) {
+        if cfg!(target_vendor = "apple") {
+            chord(ui, Key::Control, &SharedString::from(Key::RightArrow));
+        } else {
+            press(ui, Key::End);
+        }
+    }
+
+    #[test]
+    fn long_text_in_add_source_stays_in_the_box_and_follows_the_cursor() {
+        fn left(e: &ElementHandle) -> f32 {
+            e.absolute_position().x
+        }
+        fn right(e: &ElementHandle) -> f32 {
+            e.absolute_position().x + e.size().width
+        }
+
+        let (ui, _app, _dir) = start("add-source-long");
+        chord(&ui, Key::Control, "n");
+        testing::mock_elapsed_time(Duration::from_secs(1));
+
+        let flick = ElementHandle::find_by_element_id(&ui, "AddSourceDialog::flick")
+            .next()
+            .expect("add-source flickable");
+        let input = ElementHandle::find_by_element_id(&ui, "AddSourceDialog::input")
+            .next()
+            .expect("add-source input");
+        // The bordered field is the 50px-high rectangle that wraps the flickable
+        // with its 14px padding. The clip rectangle has the same height but starts
+        // at the flickable's left edge, so it is excluded.
+        let field: Vec<ElementHandle> = ElementHandle::find_by_element_type_name(&ui, "Rectangle")
+            .filter(|r| {
+                let p = r.absolute_position();
+                let s = r.size();
+                s.height == 50.
+                    && p.x < left(&flick)
+                    && p.x + s.width >= right(&flick)
+                    && p.y <= flick.absolute_position().y
+                    && p.y + s.height >= flick.absolute_position().y + flick.size().height
+            })
+            .collect();
+        assert_eq!(
+            field.len(),
+            1,
+            "exactly one bordered field around the input"
+        );
+        let field = &field[0];
+
+        let url = "https://www.gazzetta.it/dynamic-feed/rss/section/Calcio/Serie-A.xml?x=";
+        let text: String = url.repeat(2).chars().take(120).collect();
+        for c in text.chars() {
+            press(&ui, c.to_string());
+        }
+
+        // A. Overflowing text: the input runs past the container, the container
+        // stays inside the box (14px is the field's right padding), and the view
+        // is scrolled so the cursor at the end is visible.
+        assert!(
+            right(&input) >= right(&flick),
+            "text overflows: input right {} vs container right {}",
+            right(&input),
+            right(&flick)
+        );
+        assert!(
+            (right(field) - right(&flick) - 14.).abs() < 0.5,
+            "container did not grow: field right {} vs container right {}",
+            right(field),
+            right(&flick)
+        );
+        assert!(
+            left(&input) < left(&flick),
+            "scrolled to the cursor: input x {} vs container x {}",
+            left(&input),
+            left(&flick)
+        );
+
+        // B. Home scrolls back to the start.
+        move_to_line_start(&ui);
+        assert_eq!(left(&input), left(&flick), "Home scrolls back to the start");
+
+        // C. End, then delete 30 characters: still overflowing, so no blank gap.
+        move_to_line_end(&ui);
+        for _ in 0..30 {
+            press(&ui, Key::Backspace);
+        }
+        assert!(
+            right(&input) >= right(&flick) - 6.,
+            "no blank gap after deleting: input right {} vs container right {}",
+            right(&input),
+            right(&flick)
+        );
+
+        // D. Closing and reopening gives an empty field scrolled to the start.
+        ui.invoke_close_add_dialog();
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        chord(&ui, Key::Control, "n");
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert_eq!(input.accessible_value().unwrap_or_default(), "");
+        assert_eq!(
+            left(&input),
+            left(&flick),
+            "reopened field starts at the beginning"
+        );
+    }
 }

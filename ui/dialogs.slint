@@ -157,10 +157,7 @@ export component AddSourceDialog inherits Rectangle {
                     colorize: input.has-focus ? Theme.accent : Theme.text-faint;
                 }
                 Rectangle {
-                    clip: true;
                     horizontal-stretch: 1;
-                    min-width: 0px;
-                    preferred-width: 0px;
                     Text {
                         x: 0;
                         text: @tr("e.g. theverge.com or https://example.com/feed.xml");
@@ -175,10 +172,8 @@ export component AddSourceDialog inherits Rectangle {
                         height: parent.height;
                         interactive: false;
                         content-width: max(self.width, input.preferred-width + 4px);
-                        content-height: self.height;
 
                         input := TextInput {
-                            x: 0;
                             width: max(flick.width, self.preferred-width + 4px);
                             height: flick.height;
                             vertical-alignment: center;
