@@ -56,13 +56,9 @@ pub fn lang() -> Lang {
     LANG.with(Cell::get)
 }
 
-/// Switches this thread's strings, Slint's included. Needs the window to
-/// exist (it registers the bundled translations).
+/// Switches this thread's Rust-side strings.
 pub fn set_lang(lang: Lang) {
     LANG.with(|l| l.set(lang));
-    if let Err(e) = slint::select_bundled_translation(lang.code()) {
-        eprintln!("aggrega: couldn't switch the interface language: {e}");
-    }
 }
 
 const IT_PO: &str = include_str!("../translations/it/LC_MESSAGES/aggrega.po");
