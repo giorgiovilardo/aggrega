@@ -6,15 +6,8 @@ use std::collections::HashSet;
 use anyhow::{Result, bail};
 use html_escape::encode_double_quoted_attribute as escape;
 
+use crate::feed::Source;
 use crate::html::{self, Token};
-
-/// One feed in an OPML file.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Source {
-    pub title: String,
-    pub xml_url: String,
-    pub html_url: Option<String>,
-}
 
 /// Every feed in `opml`, in document order, each URL once. Folders (outlines
 /// holding outlines) are flattened, and outlines without an `xmlUrl` (folders,

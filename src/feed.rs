@@ -42,6 +42,14 @@ pub struct FeedJob {
     pub last_modified: Option<String>,
 }
 
+/// One feed in an OPML file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Source {
+    pub title: String,
+    pub xml_url: String,
+    pub html_url: Option<String>,
+}
+
 /// `Ok(None)` means the server answered "304 Not Modified".
 pub type FetchResult = Result<Option<Fetched>>;
 

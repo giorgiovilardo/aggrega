@@ -7,9 +7,8 @@ use anyhow::{Context, Result, bail};
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
-use crate::feed::{FeedJob, FetchResult, Fetched};
+use crate::feed::{FeedJob, FetchResult, Fetched, Source};
 use crate::fetch::is_unreachable;
-use crate::opml::Source;
 
 pub const SCHEMA_VERSION: i32 = 2;
 
