@@ -16,7 +16,7 @@ use slint::{
 };
 
 use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
-use crate::feed::Source;
+use crate::feed::{self, Source};
 use crate::i18n::{self, Lang, tr, trn};
 use crate::opml;
 use crate::reader::{self, Block};
@@ -693,7 +693,7 @@ impl App {
                 tr!("Couldn't find the story on its page. Open the original to read it.")
             }
             Ok(_) => String::new(),
-            Err(e) if fetch::is_unreachable(&e) => {
+            Err(e) if feed::is_unreachable(&e) => {
                 tr!("You're offline, so this is the summary from the feed.")
             }
             Err(_) => {
@@ -1464,7 +1464,7 @@ fn subscribe_all(agent: &ureq::Agent, db: &Path, sources: &[Source]) -> Result<I
                 known.insert(sub.url);
                 summary.added += 1;
             }
-            Err(e) if fetch::is_unreachable(&e) => summary.unreachable += 1,
+            Err(e) if feed::is_unreachable(&e) => summary.unreachable += 1,
             Err(_) => summary.failed += 1,
         }
     }
@@ -1704,7 +1704,7 @@ mod tests {
         app.open_article(row_of(&app, "Story 0"));
         let id = ui.get_reader().id as i64;
 
-        let offline = anyhow::Error::new(fetch::Unreachable("offline".into()));
+        let offline = anyhow::Error::new(feed::Unreachable("offline".into()));
         app.page_ready(id, Err(offline));
         assert!(!ui.get_reader_loading());
         assert!(ui.get_reader_note().contains("offline"));

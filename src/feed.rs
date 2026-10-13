@@ -60,6 +60,24 @@ pub struct Source {
 /// `Ok(None)` means the server answered "304 Not Modified".
 pub type FetchResult = Result<Option<Fetched>>;
 
+/// The server couldn't be reached at all (no network, DNS failure, timeout…).
+/// Unlike an HTTP error this says nothing about the source itself, so it's
+/// never recorded as a broken feed or a broken thumbnail.
+#[derive(Debug)]
+pub struct Unreachable(pub String);
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unreachable {}
+
+pub fn is_unreachable(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<Unreachable>().is_some()
+}
+
 /// Parses an RSS, Atom or JSON feed downloaded from `url`.
 pub fn parse(url: &str, body: &[u8]) -> Result<Fetched> {
     let feed = feed_rs::parser::Builder::new()

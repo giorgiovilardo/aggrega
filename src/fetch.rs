@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use url::Url;
 
-use crate::feed::{self, FeedJob, FetchResult, Subscription};
+use crate::feed::{self, FeedJob, FetchResult, Subscription, Unreachable};
 use crate::pool;
 
 const USER_AGENT: &str = concat!(
@@ -18,24 +18,6 @@ const USER_AGENT: &str = concat!(
 const MAX_FEED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
-
-/// The server couldn't be reached at all (no network, DNS failure, timeout…).
-/// Unlike an HTTP error this says nothing about the source itself, so it's
-/// never recorded as a broken feed or a broken thumbnail.
-#[derive(Debug)]
-pub struct Unreachable(pub String);
-
-impl std::fmt::Display for Unreachable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Unreachable {}
-
-pub fn is_unreachable(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<Unreachable>().is_some()
-}
 
 pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -259,7 +241,7 @@ mod tests {
             last_modified: None,
         };
         let err = fetch_feed(&agent(), &job).unwrap_err();
-        assert!(is_unreachable(&err), "{err:#}");
+        assert!(feed::is_unreachable(&err), "{err:#}");
     }
 
     #[test]
