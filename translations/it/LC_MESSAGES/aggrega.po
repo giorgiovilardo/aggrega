@@ -135,8 +135,11 @@ msgstr "Segna come da leggere"
 msgid "Mark as read"
 msgstr "Segna come letto"
 
-msgid "Open in browser"
-msgstr "Apri nel browser"
+msgid "Copy link"
+msgstr "Copia link"
+
+msgid "Link copied"
+msgstr "Link copiato"
 
 msgid "Fetching the full story from {}…"
 msgstr "Scarico l'articolo completo da {}…"
@@ -565,3 +568,9 @@ msgstr "Ripristina"
 
 msgid "Couldn't save the zoom level"
 msgstr "Impossibile salvare il livello di zoom"
+
+msgid "Previous story"
+msgstr "Articolo precedente"
+
+msgid "Next story"
+msgstr "Articolo successivo"

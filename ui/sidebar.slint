@@ -16,6 +16,10 @@ component SidebarItem inherits Rectangle {
     callback clicked();
     callback remove();
 
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => { root.clicked(); }
+
     property <bool> hovered: touch.has-hover || remove-touch.has-hover;
 
     height: 38px;

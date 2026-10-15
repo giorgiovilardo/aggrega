@@ -7,20 +7,23 @@ export component IconButton inherits Rectangle {
     in property <length> icon-size: 18px;
     // Spoken by screen readers (and used by UI tests to find the button).
     in property <string> label;
+    in property <bool> enabled: true;
     callback clicked();
 
     accessible-role: button;
     accessible-label: root.label;
-    accessible-action-default => { root.clicked(); }
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
 
     width: root.size;
     height: root.size;
     border-radius: root.size / 2;
-    background: touch.pressed ? Theme.chip : touch.has-hover ? Theme.hover : transparent;
+    background: !root.enabled ? transparent : touch.pressed ? Theme.chip : touch.has-hover ? Theme.hover : transparent;
     animate background { duration: 140ms; }
 
     Image {
         source: root.icon;
+        opacity: root.enabled ? 1 : 0.35;
         width: root.icon-size;
         height: root.icon-size;
         colorize: root.spinning ? Theme.accent : touch.has-hover ? Theme.ink : Theme.text-muted;
@@ -30,6 +33,7 @@ export component IconButton inherits Rectangle {
     }
 
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }

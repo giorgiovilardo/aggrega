@@ -76,6 +76,9 @@ export component AppWindow inherits Window {
     in property <[ReaderBlock]> reader-blocks;
     in property <bool> reader-loading;
     in property <string> reader-note;
+    // Whether the list the reader was opened from has a story before / after.
+    in property <bool> reader-has-prev;
+    in property <bool> reader-has-next;
 
     // Responsive layout. Narrow windows get a slimmer sidebar and margins.
     out property <bool> compact: self.width < 1000px;
@@ -105,6 +108,8 @@ export component AppWindow inherits Window {
     // Shows the database folder (false) or the thumbnail cache (true).
     callback open-data-folder(bool);
     callback reader-toggle-read();
+    // Opens the previous (-1) or next (+1) story of the list in the reader.
+    callback reader-step(int);
     // OPML: pick a file to follow its sources, or save them all to one.
     callback import-sources();
     callback export-sources();
@@ -164,7 +169,10 @@ export component AppWindow inherits Window {
         add-dialog.open();
     }
 
+    // Picking a source in the sidebar also takes the reader away, so the
+    // list it opens is in view.
     function select(id: int) {
+        self.hide-reader();
         if (id != self.selected-feed) {
             self.selected-feed = id;
             self.filter-changed();
@@ -284,6 +292,14 @@ export component AppWindow inherits Window {
                 }
                 if (event.text == "m") {
                     root.reader-toggle-read();
+                    return accept;
+                }
+                if (event.text == "j" || event.text == "n" || event.text == Key.RightArrow) {
+                    root.reader-step(1);
+                    return accept;
+                }
+                if (event.text == "k" || event.text == "p") {
+                    root.reader-step(-1);
                     return accept;
                 }
             }
@@ -473,9 +489,13 @@ export component AppWindow inherits Window {
                     blocks: root.reader-blocks;
                     loading: root.reader-loading;
                     note: root.reader-note;
+                    has-prev: root.reader-has-prev;
+                    has-next: root.reader-has-next;
+                    step(delta) => { root.reader-step(delta); }
                     back => { root.hide-reader(); }
                     open-original => { root.open-original(); }
                     toggle-read => { root.reader-toggle-read(); }
+                    link-copied => { root.show-toast(@tr("Link copied")); }
                     toggle-maximize => { root.toggle-maximize-window(); }
                 }
 

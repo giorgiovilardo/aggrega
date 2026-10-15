@@ -45,6 +45,7 @@
 | `↑` / `↓`, `Space` / `Shift+Space`, `PgUp` / `PgDn`, `Home` / `End` | Scroll the article (reader) |
 | `O` | Open the original page in your browser (reader) |
 | `M` | Toggle read / unread (reader) |
+| `J` / `N` / `→`, `K` / `P` | Next / previous story in the list (reader) |
 | any key / click | Skip the opening animation |
 
 ## Quick start (Arch Linux)

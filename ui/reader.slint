@@ -107,6 +107,9 @@ export component ReaderView inherits Rectangle {
     in property <bool> loading;
     // Why only part of the story is shown, if so.
     in property <string> note;
+    // There is a story before / after this one in the list it was opened from.
+    in property <bool> has-prev;
+    in property <bool> has-next;
     // Side margin of the page (smaller in narrow windows).
     in property <length> inset: 72px;
     // Width of the reading column, for tests and the layout below.
@@ -118,6 +121,10 @@ export component ReaderView inherits Rectangle {
     callback open-original();
     callback toggle-read();
     callback toggle-maximize();
+    // The link was put on the clipboard.
+    callback link-copied();
+    // -1 for the previous story, +1 for the next.
+    callback step(int);
 
     public function scroll-to-top() {
         scroll.content-y = 0;
@@ -128,6 +135,16 @@ export component ReaderView inherits Rectangle {
         scroll.content-y = max(min(scroll.visible-height - scroll.content-height, 0px), min(0px, scroll.content-y - delta));
     }
 
+    // Slint has no clipboard API of its own, so the link goes through a
+    // hidden text field's copy.
+    public function copy-link() {
+        clipboard.text = root.article.link;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
+        root.link-copied();
+    }
+
     public function page-height() -> length {
         return scroll.visible-height - 60px;
     }
@@ -136,6 +153,11 @@ export component ReaderView inherits Rectangle {
     animate background { duration: 300ms; }
     // Swallow clicks so nothing underneath reacts.
     TouchArea { }
+
+    clipboard := TextInput {
+        visible: false;
+        read-only: true;
+    }
 
     VerticalLayout {
         // Toolbar — doubles as the window title bar, like the list header.
@@ -192,14 +214,26 @@ export component ReaderView inherits Rectangle {
                         horizontal-stretch: 1;
                     }
                     IconButton {
+                        icon: Icons.chevron-left;
+                        label: @tr("Previous story");
+                        enabled: root.has-prev;
+                        clicked => { root.step(-1); }
+                    }
+                    IconButton {
+                        icon: Icons.chevron-right;
+                        label: @tr("Next story");
+                        enabled: root.has-next;
+                        clicked => { root.step(1); }
+                    }
+                    IconButton {
                         icon: root.article.read ? Icons.circle : Icons.check;
                         label: root.article.read ? @tr("Mark as unread") : @tr("Mark as read");
                         clicked => { root.toggle-read(); }
                     }
                     IconButton {
                         icon: Icons.link;
-                        label: @tr("Open in browser");
-                        clicked => { root.open-original(); }
+                        label: @tr("Copy link");
+                        clicked => { root.copy-link(); }
                     }
                 }
                 Rectangle {

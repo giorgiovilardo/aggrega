@@ -48,6 +48,7 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_close_reader(|| with_app(|a| a.close_reader()));
     ui.on_open_original(|| with_app(|a| a.open_original()));
     ui.on_reader_toggle_read(|| with_app(|a| a.reader_toggle_read()));
+    ui.on_reader_step(|delta| with_app(|a| a.reader_step(delta)));
     ui.on_open_link(|url| with_app(|a| a.open_link(url)));
     ui.on_open_data_folder(|thumbs| with_app(|a| a.open_data_folder(thumbs)));
     ui.on_import_sources(|| with_app(|a| a.import_sources()));

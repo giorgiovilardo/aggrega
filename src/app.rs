@@ -170,6 +170,19 @@ pub struct App {
     reader_link: RefCell<String>,
     reader_lead: RefCell<Option<String>>,
     reader_len: Cell<usize>,
+    /// The ids of the list the reader was opened from, as it was then (read
+    /// stories leave the Unread list, but next/previous still walk past them),
+    /// and the open story's position in it.
+    reader_list: RefCell<Vec<i64>>,
+    reader_pos: Cell<usize>,
+    /// Page downloads still running, so stepping onto a story being
+    /// prefetched waits for that download instead of starting another.
+    pages_pending: RefCell<HashSet<i64>>,
+    /// The next story, loaded ahead of time: its id and the pictures that
+    /// arrived for it (`None` for broken ones), or are still on their way.
+    prefetch_id: Cell<Option<i64>>,
+    prefetch_pictures: RefCell<HashMap<String, Option<slint::Image>>>,
+    prefetch_pending: RefCell<HashSet<String>>,
     sync_config: RefCell<sync::Config>,
     /// Discovery and serving, while the Sync tab is open.
     sync: RefCell<Option<sync::Session>>,
@@ -245,6 +258,12 @@ impl App {
             reader_link: RefCell::default(),
             reader_lead: RefCell::default(),
             reader_len: Cell::new(0),
+            reader_list: RefCell::default(),
+            reader_pos: Cell::new(0),
+            pages_pending: RefCell::default(),
+            prefetch_id: Cell::new(None),
+            prefetch_pictures: RefCell::default(),
+            prefetch_pending: RefCell::default(),
             sync_config: RefCell::default(),
             sync: RefCell::default(),
             sync_gen: Cell::new(0),
@@ -571,21 +590,86 @@ impl App {
         let Some(item) = self.articles.row_data(row) else {
             return;
         };
-        self.show_reader(item.id as i64);
-        if !item.read {
-            self.set_read(row, true);
+        // Rows already animating out of the Unread list don't count.
+        let list: Vec<i64> = self
+            .articles
+            .iter()
+            .filter(|r| !r.leaving || r.id == item.id)
+            .map(|r| r.id as i64)
+            .collect();
+        let pos = list
+            .iter()
+            .position(|&id| id == item.id as i64)
+            .unwrap_or(0);
+        *self.reader_list.borrow_mut() = list;
+        self.reader_pos.set(pos);
+        if self.show_reader(item.id as i64) {
+            self.opened(item.id as i64);
         }
+    }
+
+    /// Opens the story `delta` places away in the list the reader was opened
+    /// from, skipping any that have been deleted since.
+    pub fn reader_step(&self, delta: i32) {
+        if self.reader_id.get().is_none() {
+            return;
+        }
+        let len = self.reader_list.borrow().len();
+        let mut pos = self.reader_pos.get();
+        loop {
+            pos = match pos.checked_add_signed(delta as isize) {
+                Some(p) if p < len => p,
+                _ => return,
+            };
+            let id = self.reader_list.borrow()[pos];
+            if self.show_reader(id) {
+                self.reader_pos.set(pos);
+                self.opened(id);
+                return;
+            }
+        }
+    }
+
+    /// Marks the story just shown in the reader as read, then gets the next
+    /// one ready.
+    fn opened(&self, id: i64) {
+        let row = (0..self.articles.row_count())
+            .find(|&i| self.articles.row_data(i).is_some_and(|r| r.id as i64 == id));
+        match row {
+            Some(row) => {
+                if self.articles.row_data(row).is_some_and(|r| !r.read) {
+                    self.set_read(row, true);
+                }
+            }
+            // Not in the list any more (say, a refresh reloaded it).
+            None => match self.store.set_read(id, true) {
+                Ok(()) => self.reload_feeds(),
+                Err(e) => self.report(tr!("Couldn't save read state"), e),
+            },
+        }
+        let pos = self.reader_pos.get();
+        let list = self.reader_list.borrow();
+        let ui = self.ui();
+        ui.set_reader_has_prev(pos > 0);
+        ui.set_reader_has_next(pos + 1 < list.len());
+        let next = list.get(pos + 1).copied();
+        drop(list);
+        self.prefetch(next);
     }
 
     // ---- reader view -------------------------------------------------------
 
     /// Opens the reader with the feed's copy of the article, then fetches the
-    /// full page in the background if the feed only had a summary.
-    fn show_reader(&self, id: i64) {
+    /// full page in the background if the feed only had a summary. False if
+    /// the article is gone.
+    fn show_reader(&self, id: i64) -> bool {
         let article = match self.store.reader_article(id) {
             Ok(Some(a)) => a,
-            Ok(None) => return,
-            Err(e) => return self.report(tr!("Couldn't open the article"), e),
+            Ok(None) => return false,
+            Err(e) => {
+                self.report(tr!("Couldn't open the article"), e);
+                return false;
+            }
         };
         let ui = self.ui();
         let lead = article.image_url.clone();
@@ -606,6 +690,7 @@ impl App {
             source: article.feed_title.as_str().into(),
             time: text::ago(article.published, now()).into(),
             host: host_of(&article.link).into(),
+            link: article.link.as_str().into(),
             tint: tint(&article.feed_title),
             read: true,
             lead: Default::default(),
@@ -624,17 +709,57 @@ impl App {
         ui.invoke_show_reader();
 
         if fetch_page {
-            let agent = self.agent.clone();
-            let link = article.link;
-            std::thread::spawn(move || {
-                let result = fetch::fetch_page(&agent, &link).map(|page| {
-                    let base = url::Url::parse(&link).expect("scrapable links are valid URLs");
-                    reader::extract_article(&page, &base)
-                });
-                let _ = slint::invoke_from_event_loop(move || {
-                    with_app(|app| app.page_ready(id, result))
-                });
+            self.fetch_page(id, article.link);
+        }
+        true
+    }
+
+    /// Downloads the article's page on a worker, unless that's already
+    /// happening; `page_ready` gets the result.
+    fn fetch_page(&self, id: i64, link: String) {
+        if !self.pages_pending.borrow_mut().insert(id) {
+            return;
+        }
+        let agent = self.agent.clone();
+        std::thread::spawn(move || {
+            let result = fetch::fetch_page(&agent, &link).map(|page| {
+                let base = url::Url::parse(&link).expect("scrapable links are valid URLs");
+                reader::extract_article(&page, &base)
             });
+            let _ =
+                slint::invoke_from_event_loop(move || with_app(|app| app.page_ready(id, result)));
+        });
+    }
+
+    /// Loads the story after the open one ahead of time: its full page, if the
+    /// feed only had a summary, and its pictures, so it opens instantly.
+    fn prefetch(&self, id: Option<i64>) {
+        if self.prefetch_id.get() == id {
+            return;
+        }
+        self.prefetch_id.set(id);
+        self.prefetch_pictures.borrow_mut().clear();
+        self.prefetch_pending.borrow_mut().clear();
+        let Some(id) = id else {
+            return;
+        };
+        let Ok(Some(article)) = self.store.reader_article(id) else {
+            return;
+        };
+        let lead = article.image_url.clone();
+        let blocks = reader::tidy(
+            reader::decode(article.body.as_deref().unwrap_or("")),
+            &article.title,
+            lead.as_deref(),
+        );
+        if (article.body.is_none() || reader::needs_full_page(&blocks))
+            && reader::is_scrapable(&article.link)
+        {
+            // Its pictures are fetched once the page is in (see `page_ready`).
+            self.fetch_page(id, article.link);
+            self.load_pictures(id, lead.into_iter().collect());
+        } else {
+            self.load_pictures(id, lead.into_iter().chain(image_urls(&blocks)).collect());
         }
     }
 
@@ -674,8 +799,13 @@ impl App {
     }
 
     fn page_ready(&self, id: i64, result: Result<Vec<Block>>) {
+        self.pages_pending.borrow_mut().remove(&id);
         let current = self.reader_id.get() == Some(id);
-        let shown = if current { self.reader_len.get() } else { 0 };
+        let shown = if current {
+            self.reader_len.get()
+        } else {
+            self.stored_len(id)
+        };
         let note = match result {
             Ok(page) if reader::text_len(&page) > shown => {
                 // Keep it, so the article opens instantly (and offline) next time.
@@ -686,6 +816,8 @@ impl App {
                     let title = self.ui().get_reader().title;
                     let lead = self.reader_lead.borrow().clone();
                     self.set_reader_blocks(&reader::tidy(page, &title, lead.as_deref()));
+                } else if self.prefetch_id.get() == Some(id) {
+                    self.load_pictures(id, image_urls(&page).collect());
                 }
                 String::new()
             }
@@ -707,7 +839,31 @@ impl App {
         }
     }
 
-    fn load_pictures(&self, id: i64, urls: Vec<String>) {
+    /// How much text the stored copy of an article has.
+    fn stored_len(&self, id: i64) -> usize {
+        match self.store.reader_article(id) {
+            Ok(Some(a)) => reader::text_len(&reader::decode(a.body.as_deref().unwrap_or(""))),
+            _ => 0,
+        }
+    }
+
+    /// Downloads pictures for article `id`. Those already loaded or on their
+    /// way for the prefetched story are taken from there instead.
+    fn load_pictures(&self, id: i64, mut urls: Vec<String>) {
+        if self.prefetch_id.get() == Some(id) {
+            let ready: Vec<(String, Option<slint::Image>)> = {
+                let cache = self.prefetch_pictures.borrow();
+                urls.iter()
+                    .filter_map(|u| cache.get(u).map(|img| (u.clone(), img.clone())))
+                    .collect()
+            };
+            for (url, image) in ready {
+                self.show_picture(&url, image);
+            }
+            let mut pending = self.prefetch_pending.borrow_mut();
+            let cache = self.prefetch_pictures.borrow();
+            urls.retain(|u| !cache.contains_key(u) && pending.insert(u.clone()));
+        }
         if urls.is_empty() {
             return;
         }
@@ -724,10 +880,20 @@ impl App {
     }
 
     fn picture_ready(&self, id: i64, url: &str, picture: Option<SharedPixelBuffer<Rgba8Pixel>>) {
-        if self.reader_id.get() != Some(id) {
-            return;
-        }
         let image = picture.map(slint::Image::from_rgba8);
+        if self.prefetch_id.get() == Some(id) {
+            self.prefetch_pending.borrow_mut().remove(url);
+            self.prefetch_pictures
+                .borrow_mut()
+                .insert(url.to_owned(), image.clone());
+        }
+        if self.reader_id.get() == Some(id) {
+            self.show_picture(url, image);
+        }
+    }
+
+    /// Puts a downloaded picture in the open article (or drops its block).
+    fn show_picture(&self, url: &str, image: Option<slint::Image>) {
         if self.reader_lead.borrow().as_deref() == Some(url) {
             let ui = self.ui();
             let mut info = ui.get_reader();
@@ -756,6 +922,8 @@ impl App {
 
     pub fn close_reader(&self) {
         self.reader_id.set(None);
+        self.reader_list.borrow_mut().clear();
+        self.prefetch(None);
         // Free the pictures; the list underneath is still as the user left it.
         self.reader_blocks.set_vec(Vec::new());
         let ui = self.ui();
@@ -1471,6 +1639,14 @@ fn subscribe_all(agent: &ureq::Agent, db: &Path, sources: &[Source]) -> Result<I
     Ok(summary)
 }
 
+/// The pictures among `blocks`.
+fn image_urls(blocks: &[Block]) -> impl Iterator<Item = String> + '_ {
+    blocks.iter().filter_map(|b| match b {
+        Block::Image(u) => Some(u.clone()),
+        _ => None,
+    })
+}
+
 /// The site name shown in the reader, e.g. "example.com".
 fn host_of(link: &str) -> String {
     url::Url::parse(link)
@@ -1505,7 +1681,7 @@ mod tests {
     use super::*;
     use crate::feed::{Fetched, NewArticle};
     use crate::setup;
-    use i_slint_backend_testing::{self as testing, ElementHandle};
+    use i_slint_backend_testing::{self as testing, AccessibleRole, ElementHandle};
     use slint::platform::{Key, WindowEvent};
 
     const LONG: &str = "Reading is the whole point of an aggregator, and this paragraph is long enough to count as the full text of the story.";
@@ -1805,6 +1981,136 @@ mod tests {
             ElementHandle::find_by_accessible_label(&ui, "Mark as read")
                 .next()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn picking_a_source_closes_the_reader() {
+        let (ui, app, _dir) = start("sidebar");
+        let source = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .find(|e| e.accessible_role() == Some(AccessibleRole::Button))
+                .unwrap_or_else(|| panic!("{label} in the sidebar"))
+        };
+        app.open_article(row_of(&app, "Story 1"));
+        source("Example Blog").invoke_accessible_default_action();
+        assert!(!ui.get_reader_open());
+        assert_eq!(app.reader_id.get(), None);
+        assert!(ui.get_selected_feed() >= 0);
+
+        // Even the source already shown.
+        app.open_article(0);
+        source("Example Blog").invoke_accessible_default_action();
+        assert!(!ui.get_reader_open());
+        app.open_article(0);
+        source("All articles").invoke_accessible_default_action();
+        assert!(!ui.get_reader_open());
+        assert_eq!(ui.get_selected_feed(), -1);
+    }
+
+    #[test]
+    fn copy_link_confirms_with_a_toast() {
+        let (ui, app, _dir) = start("copy");
+        app.open_article(row_of(&app, "Story 1"));
+        assert_eq!(ui.get_reader().link, "http://127.0.0.1:9/story/1");
+        ElementHandle::find_by_accessible_label(&ui, "Copy link")
+            .next()
+            .expect("copy link button")
+            .invoke_accessible_default_action();
+        // The toast slides up from below the window.
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert!(
+            ElementHandle::find_by_accessible_label(&ui, "Link copied")
+                .next()
+                .is_some(),
+            "a toast says so"
+        );
+    }
+
+    #[test]
+    fn next_and_previous_walk_the_list_the_reader_came_from() {
+        let (ui, app, _dir) = start("step");
+        // The Unread view: stories leave it once read, but stepping doesn't skip.
+        assert!(ui.get_unread_only());
+        app.open_article(row_of(&app, "Story 1"));
+        let first = app.reader_id.get().unwrap();
+        assert!(!ui.get_reader_has_prev());
+        assert!(ui.get_reader_has_next());
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert_eq!(app.articles.row_count(), 1, "Story 1 left the Unread list");
+
+        press(&ui, "j");
+        assert_eq!(ui.get_reader().title, "Story 0");
+        let second = app.reader_id.get().unwrap();
+        assert!(read_in_db(&app, second), "stepping onto a story reads it");
+        assert!(ui.get_reader_has_prev());
+        assert!(!ui.get_reader_has_next());
+        press(&ui, Key::RightArrow);
+        assert_eq!(ui.get_reader().title, "Story 0", "stays put at the end");
+
+        press(&ui, "k");
+        assert_eq!(ui.get_reader().title, "Story 1");
+        assert_eq!(app.reader_id.get(), Some(first));
+        press(&ui, "p");
+        assert_eq!(ui.get_reader().title, "Story 1", "stays put at the start");
+
+        let button = |label: &str| {
+            ElementHandle::find_by_accessible_label(&ui, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label} button"))
+        };
+        button("Previous story").invoke_accessible_default_action();
+        assert_eq!(ui.get_reader().title, "Story 1", "disabled at the start");
+        button("Next story").invoke_accessible_default_action();
+        assert_eq!(ui.get_reader().title, "Story 0");
+        button("Previous story").invoke_accessible_default_action();
+        assert_eq!(ui.get_reader().title, "Story 1");
+
+        press(&ui, Key::Escape);
+        press(&ui, "j");
+        assert!(!ui.get_reader_open(), "no stepping with the reader closed");
+    }
+
+    #[test]
+    fn the_next_story_is_loaded_ahead() {
+        let (ui, app, _dir) = start("prefetch");
+        app.open_article(row_of(&app, "Story 1"));
+        // Story 0 only has a teaser: its page is already being fetched.
+        let next = app.prefetch_id.get().expect("next story prefetched");
+        assert!(app.pages_pending.borrow().contains(&next));
+        let mut page = full_text();
+        page.push(Block::Image("http://127.0.0.1:9/a.png".into()));
+        let blocks = page.len();
+        app.page_ready(next, Ok(page));
+        assert!(!read_in_db(&app, next), "prefetching doesn't read it");
+        // Its pictures are on their way too.
+        assert!(
+            app.prefetch_pending
+                .borrow()
+                .contains("http://127.0.0.1:9/a.png")
+        );
+
+        app.reader_step(1);
+        assert_eq!(app.reader_id.get(), Some(next));
+        assert!(!ui.get_reader_loading(), "opens with the full text");
+        assert_eq!(app.reader_blocks.row_count(), blocks);
+        assert_eq!(kinds(&app).last(), Some(&BlockKind::Image));
+        assert_eq!(app.prefetch_id.get(), None, "nothing after the last story");
+    }
+
+    #[test]
+    fn a_page_still_loading_ahead_is_not_fetched_twice() {
+        let (ui, app, _dir) = start("prefetch-wait");
+        app.open_article(row_of(&app, "Story 1"));
+        let next = app.prefetch_id.get().unwrap();
+        app.reader_step(1);
+        assert!(ui.get_reader_loading(), "waits for the prefetch");
+        assert_eq!(app.pages_pending.borrow().len(), 1);
+        app.page_ready(next, Ok(full_text()));
+        assert!(!ui.get_reader_loading());
+        assert!(
+            app.reader_blocks.row_count() > 1,
+            "the page replaced the teaser"
         );
     }
 
