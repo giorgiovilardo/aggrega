@@ -355,7 +355,8 @@ impl Store {
     }
 
     /// Articles matching `query`, best tier first and newest first within a
-    /// tier, up to `limit`. Later tiers only run while there is room left.
+    /// tier, up to `limit`. Later tiers only run while there is room left, and
+    /// typo tiers only when the exact tier found fewer than `search::FUZZY_BELOW`.
     // used by the search UI, next step
     #[allow(dead_code)]
     pub fn search(
@@ -365,7 +366,7 @@ impl Store {
         limit: usize,
     ) -> Result<Vec<Article>> {
         let mut found = Vec::new();
-        for expr in query.tiers() {
+        for (tier, expr) in query.tiers().iter().enumerate() {
             if found.len() >= limit {
                 break;
             }
@@ -387,6 +388,9 @@ impl Store {
                 article_row,
             )?;
             found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+            if tier == 0 && found.len() >= search::FUZZY_BELOW {
+                break;
+            }
         }
         Ok(found)
     }
@@ -1106,6 +1110,44 @@ mod tests {
         let titles = found_in(&store, "kernel", unread, 50)?;
         assert!(!titles.contains(&"Kernel new".to_string()), "{titles:?}");
         assert!(titles.contains(&"Kernal typo".to_string()), "{titles:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn typo_tiers_only_run_when_exact_matches_are_scarce() -> Result<()> {
+        let dir = temp_dir("fuzzy-below");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        let exact: Vec<String> = (0..10).map(|i| format!("Kernel {i}")).collect();
+        let mut titles: Vec<&str> = exact.iter().map(String::as_str).collect();
+        titles.push("Kernal typo");
+        store.add_feed("https://x.org/rss", &titled("Feed", &titles))?;
+        let got = found(&store, "kernel")?;
+        assert_eq!(got.len(), 10, "{got:?}");
+        assert!(!got.contains(&"Kernal typo".to_string()), "{got:?}");
+
+        // One exact match fewer: the typo follows the exact ones.
+        let dir = temp_dir("fuzzy-below-9");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        store.add_feed("https://x.org/rss", &titled("Feed", &titles[1..]))?;
+        let got = found(&store, "kernel")?;
+        assert_eq!(got.len(), 10, "{got:?}");
+        assert_eq!(got.last().map(String::as_str), Some("Kernal typo"));
+        Ok(())
+    }
+
+    #[test]
+    fn folded_spelling_matches_in_the_exact_tier() -> Result<()> {
+        let dir = temp_dir("folded-prefix");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        store.add_feed(
+            "https://x.org/rss",
+            &titled("Feed", &["Straßenbahn fährt", "Strasze typo"]),
+        )?;
+        // The typo is newer, so it would come first if it were in the exact tier.
+        assert_eq!(
+            found(&store, "strasse")?,
+            ["Straßenbahn fährt", "Strasze typo"]
+        );
         Ok(())
     }
 
