@@ -340,7 +340,10 @@ mod tests {
         assert!(a.snippet.contains("Check Out Weathered on PBS Terra"));
         let paragraph = "Check Out Weathered on PBS Terra \
             https://www.youtube.com/watch?v=znSN7ZFIaOg&ab_channel=PBSTerra";
-        assert!(reader::decode(&a.body).contains(&reader::Block::Paragraph(paragraph.into())));
+        assert!(
+            reader::decode(&a.body)
+                .contains(&reader::Block::new(reader::Kind::Paragraph, paragraph))
+        );
     }
 
     #[test]
@@ -366,7 +369,7 @@ mod tests {
         assert_eq!(a.image_url.as_deref(), Some(pic));
         assert_eq!(
             reader::decode(&a.body),
-            vec![reader::Block::Image(pic.into())]
+            vec![reader::Block::new(reader::Kind::Image, pic)]
         );
     }
 
@@ -400,8 +403,8 @@ mod tests {
         assert_eq!(
             reader::decode(&a.body),
             vec![
-                reader::Block::Paragraph("Body".into()),
-                reader::Block::Image("https://demo.org/pic.jpg".into()),
+                reader::Block::new(reader::Kind::Paragraph, "Body"),
+                reader::Block::new(reader::Kind::Image, "https://demo.org/pic.jpg"),
             ]
         );
         assert!(parse("https://demo.org/rss", b"<html>not a feed</html>").is_err());
@@ -435,8 +438,8 @@ mod tests {
         assert_eq!(
             reader::decode(&a.body),
             vec![
-                reader::Block::Heading("Intro".into()),
-                reader::Block::Paragraph("The whole story.".into()),
+                reader::Block::new(reader::Kind::Heading, "Intro"),
+                reader::Block::new(reader::Kind::Paragraph, "The whole story."),
             ]
         );
     }

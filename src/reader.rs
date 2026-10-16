@@ -17,25 +17,66 @@ const MIN_FALLBACK_PARAGRAPH: usize = 80;
 const MAX_BLOCKS: usize = 1500;
 const MAX_IMAGES: usize = 24;
 
+/// What a block is, which decides how the reader lays it out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Heading,
+    Paragraph,
+    Quote,
+    Bullet,
+    Code,
+    Image,
+}
+
+/// One piece of an article's reader view.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Block {
-    Heading(String),
-    Paragraph(String),
-    Quote(String),
-    Bullet(String),
-    Code(String),
-    Image(String),
+pub struct Block {
+    pub kind: Kind,
+    /// The text, or the picture's URL for an image.
+    pub text: String,
+}
+
+impl Kind {
+    /// The one-letter code used in the storage format.
+    pub fn letter(self) -> char {
+        match self {
+            Kind::Heading => 'h',
+            Kind::Paragraph => 'p',
+            Kind::Quote => 'q',
+            Kind::Bullet => 'l',
+            Kind::Code => 'c',
+            Kind::Image => 'i',
+        }
+    }
+
+    /// The kind for a storage code; only the exact one-letter codes match.
+    pub fn from_letter(code: &str) -> Option<Kind> {
+        match code {
+            "h" => Some(Kind::Heading),
+            "p" => Some(Kind::Paragraph),
+            "q" => Some(Kind::Quote),
+            "l" => Some(Kind::Bullet),
+            "c" => Some(Kind::Code),
+            "i" => Some(Kind::Image),
+            _ => None,
+        }
+    }
 }
 
 impl Block {
+    /// A block of `kind` holding `text`.
+    pub fn new(kind: Kind, text: impl Into<String>) -> Self {
+        Block {
+            kind,
+            text: text.into(),
+        }
+    }
+
     fn text_len(&self) -> usize {
-        match self {
-            Block::Image(_) => 0,
-            Block::Heading(t)
-            | Block::Paragraph(t)
-            | Block::Quote(t)
-            | Block::Bullet(t)
-            | Block::Code(t) => t.chars().count(),
+        if self.kind == Kind::Image {
+            0
+        } else {
+            self.text.chars().count()
         }
     }
 }
@@ -71,17 +112,9 @@ pub fn is_scrapable(link: &str) -> bool {
 pub fn encode(blocks: &[Block]) -> String {
     let mut out = String::new();
     for b in blocks {
-        let (kind, t) = match b {
-            Block::Heading(t) => ('h', t),
-            Block::Paragraph(t) => ('p', t),
-            Block::Quote(t) => ('q', t),
-            Block::Bullet(t) => ('l', t),
-            Block::Code(t) => ('c', t),
-            Block::Image(t) => ('i', t),
-        };
-        out.push(kind);
+        out.push(b.kind.letter());
         out.push(' ');
-        for ch in t.chars() {
+        for ch in b.text.chars() {
             match ch {
                 '\\' => out.push_str("\\\\"),
                 '\n' => out.push_str("\\n"),
@@ -110,15 +143,7 @@ pub fn decode(s: &str) -> Vec<Block> {
                     t.push(ch);
                 }
             }
-            Some(match kind {
-                "h" => Block::Heading(t),
-                "p" => Block::Paragraph(t),
-                "q" => Block::Quote(t),
-                "l" => Block::Bullet(t),
-                "c" => Block::Code(t),
-                "i" => Block::Image(t),
-                _ => return None,
-            })
+            Some(Block::new(Kind::from_letter(kind)?, t))
         })
         .collect()
 }
@@ -187,15 +212,6 @@ const CHROME_HINTS: [&str; 20] = [
     "paywall",
 ];
 
-#[derive(Clone, Copy, PartialEq)]
-enum Kind {
-    Paragraph,
-    Heading,
-    Quote,
-    Bullet,
-    Code,
-}
-
 struct Builder<'b> {
     base: Option<&'b Url>,
     blocks: Vec<Block>,
@@ -216,13 +232,7 @@ impl Builder<'_> {
         if t.is_empty() {
             return;
         }
-        self.blocks.push(match self.kind {
-            Kind::Paragraph => Block::Paragraph(t),
-            Kind::Heading => Block::Heading(t),
-            Kind::Quote => Block::Quote(t),
-            Kind::Bullet => Block::Bullet(t),
-            Kind::Code => Block::Code(t),
-        });
+        self.blocks.push(Block::new(self.kind, t));
     }
 
     fn image(&mut self, tag: &str) {
@@ -250,8 +260,9 @@ impl Builder<'_> {
             return;
         }
         self.flush();
-        if self.blocks.last() != Some(&Block::Image(url.clone())) {
-            self.blocks.push(Block::Image(url));
+        let image = Block::new(Kind::Image, url);
+        if self.blocks.last() != Some(&image) {
+            self.blocks.push(image);
             self.images += 1;
         }
     }
@@ -355,7 +366,7 @@ pub fn blocks_from_html(html: &str, base: Option<&Url>) -> Vec<Block> {
             .split("\n\n")
             .map(text::collapse_ws)
             .filter(|p| !p.is_empty())
-            .map(Block::Paragraph)
+            .map(|p| Block::new(Kind::Paragraph, p))
             .collect();
     }
     blocks_from_tokens(&tokenize(html), base, false)
@@ -413,7 +424,7 @@ pub fn extract_article(page: &str, base: &Url) -> Vec<Block> {
         .unwrap_or(0);
     let all = blocks_from_tokens(&tokens[body..], Some(base), true);
     let substantial =
-        |b: &Block| matches!(b, Block::Paragraph(t) if t.chars().count() >= MIN_FALLBACK_PARAGRAPH);
+        |b: &Block| b.kind == Kind::Paragraph && b.text.chars().count() >= MIN_FALLBACK_PARAGRAPH;
     let (Some(first), Some(last)) = (
         all.iter().position(substantial),
         all.iter().rposition(substantial),
@@ -422,9 +433,9 @@ pub fn extract_article(page: &str, base: &Url) -> Vec<Block> {
     };
     all[first..=last]
         .iter()
-        .filter(
-            |b| !matches!(b, Block::Paragraph(t) if t.chars().count() < MIN_FALLBACK_PARAGRAPH / 2),
-        )
+        .filter(|b| {
+            !(b.kind == Kind::Paragraph && b.text.chars().count() < MIN_FALLBACK_PARAGRAPH / 2)
+        })
         .cloned()
         .collect()
 }
@@ -436,7 +447,7 @@ pub fn tidy(mut blocks: Vec<Block>, title: &str, lead_image: Option<&str>) -> Ve
     if let Some(p) = blocks
         .iter()
         .take(4)
-        .position(|b| matches!(b, Block::Heading(t) if same(t, title)))
+        .position(|b| b.kind == Kind::Heading && same(&b.text, title))
     {
         blocks.remove(p);
     }
@@ -444,7 +455,7 @@ pub fn tidy(mut blocks: Vec<Block>, title: &str, lead_image: Option<&str>) -> Ve
         && let Some(p) = blocks
             .iter()
             .take(4)
-            .position(|b| matches!(b, Block::Image(u) if u == lead))
+            .position(|b| b.kind == Kind::Image && b.text == lead)
     {
         blocks.remove(p);
     }
@@ -456,7 +467,7 @@ mod tests {
     use super::*;
 
     fn para(s: &str) -> Block {
-        Block::Paragraph(s.into())
+        Block::new(Kind::Paragraph, s)
     }
 
     #[test]
@@ -473,11 +484,11 @@ mod tests {
             blocks_from_html(html, None),
             vec![
                 para("First bold paragraph."),
-                Block::Heading("A heading".into()),
-                Block::Bullet("One".into()),
-                Block::Bullet("Two & three".into()),
-                Block::Quote("Quoted".into()),
-                Block::Code("fn main() {\n    println!(\"hi\");\n}".into()),
+                Block::new(Kind::Heading, "A heading"),
+                Block::new(Kind::Bullet, "One"),
+                Block::new(Kind::Bullet, "Two & three"),
+                Block::new(Kind::Quote, "Quoted"),
+                Block::new(Kind::Code, "fn main() {\n    println!(\"hi\");\n}"),
                 para("Tail line"),
             ]
         );
@@ -500,9 +511,9 @@ mod tests {
             blocks_from_html(html, Some(&base)),
             vec![
                 para("Hi"),
-                Block::Image("https://site.org/a.jpg".into()),
-                Block::Image("https://site.org/posts/b.png".into()),
-                Block::Image("https://site.org/a.jpg".into()),
+                Block::new(Kind::Image, "https://site.org/a.jpg"),
+                Block::new(Kind::Image, "https://site.org/posts/b.png"),
+                Block::new(Kind::Image, "https://site.org/a.jpg"),
             ]
         );
     }
@@ -516,7 +527,7 @@ mod tests {
             blocks_from_html(html, Some(&base)),
             vec![
                 para("Hi"),
-                Block::Image("https://site.org/a.jpg".into()),
+                Block::new(Kind::Image, "https://site.org/a.jpg"),
                 para("Bye")
             ]
         );
@@ -538,8 +549,8 @@ mod tests {
         assert_eq!(
             blocks_from_html("<ul><li>a<li>b</ul><p>after</p>", None),
             vec![
-                Block::Bullet("a".into()),
-                Block::Bullet("b".into()),
+                Block::new(Kind::Bullet, "a"),
+                Block::new(Kind::Bullet, "b"),
                 para("after")
             ]
         );
@@ -577,9 +588,9 @@ mod tests {
         assert_eq!(
             blocks,
             vec![
-                Block::Heading("The Story".into()),
+                Block::new(Kind::Heading, "The Story"),
                 para(&long("alpha")),
-                Block::Image("https://news.org/img/lead.jpg".into()),
+                Block::new(Kind::Image, "https://news.org/img/lead.jpg"),
                 para("Caption"),
                 para(&long("beta")),
             ]
@@ -614,7 +625,7 @@ mod tests {
             extract_article(&page, &base),
             vec![
                 para(&long("first")),
-                Block::Heading("Part two".into()),
+                Block::new(Kind::Heading, "Part two"),
                 para(&long("second")),
             ]
         );
@@ -624,12 +635,12 @@ mod tests {
     #[test]
     fn storage_round_trip() {
         let blocks = vec![
-            Block::Heading("Title \\ slash".into()),
+            Block::new(Kind::Heading, "Title \\ slash"),
             para("Line"),
-            Block::Code("a\nb\\nc".into()),
-            Block::Quote("q".into()),
-            Block::Bullet("l".into()),
-            Block::Image("https://x.org/a.jpg".into()),
+            Block::new(Kind::Code, "a\nb\\nc"),
+            Block::new(Kind::Quote, "q"),
+            Block::new(Kind::Bullet, "l"),
+            Block::new(Kind::Image, "https://x.org/a.jpg"),
         ];
         let s = encode(&blocks);
         assert_eq!(s.lines().count(), blocks.len());
@@ -637,6 +648,27 @@ mod tests {
         // Unknown kinds (from a future version) are skipped, not fatal.
         assert_eq!(decode("z whatever\np ok\n"), vec![para("ok")]);
         assert!(decode("").is_empty());
+    }
+
+    #[test]
+    fn every_kind_round_trips_and_codes_are_exact() {
+        let kinds = [
+            Kind::Heading,
+            Kind::Paragraph,
+            Kind::Quote,
+            Kind::Bullet,
+            Kind::Code,
+            Kind::Image,
+        ];
+        for kind in kinds {
+            assert_eq!(Kind::from_letter(&kind.letter().to_string()), Some(kind));
+            let blocks = vec![Block::new(kind, "a\\b\nc")];
+            assert_eq!(decode(&encode(&blocks)), blocks);
+        }
+        // Only the exact one-letter codes count; a longer token or a missing one is dropped.
+        assert!(decode("hx text\n text\n\n").is_empty());
+        assert_eq!(Kind::from_letter("hx"), None);
+        assert_eq!(Kind::from_letter(""), None);
     }
 
     #[test]
@@ -653,14 +685,14 @@ mod tests {
     #[test]
     fn tidies_repeated_title_and_image() {
         let blocks = vec![
-            Block::Heading("My Post".into()),
-            Block::Image("https://x.org/lead.jpg".into()),
+            Block::new(Kind::Heading, "My Post"),
+            Block::new(Kind::Image, "https://x.org/lead.jpg"),
             para("Body"),
-            Block::Heading("My Post".into()),
+            Block::new(Kind::Heading, "My Post"),
         ];
         assert_eq!(
             tidy(blocks, " my post ", Some("https://x.org/lead.jpg")),
-            vec![para("Body"), Block::Heading("My Post".into())]
+            vec![para("Body"), Block::new(Kind::Heading, "My Post")]
         );
     }
 }
