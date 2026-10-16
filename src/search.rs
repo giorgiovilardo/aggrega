@@ -73,12 +73,12 @@ fn base_letter(c: char) -> char {
     }
 }
 
-/// Edit budget for a query token of `len` folded characters: none for short
-/// tokens (prefix only), one edit for 4-7 characters, two from 8 characters.
+/// Edit budget for a query token of `len` folded characters: none for up to
+/// 4 characters (prefix only), one edit for 5-8 characters, two from 9.
 fn max_edits(len: usize) -> usize {
     match len {
-        0..=3 => 0,
-        4..=7 => 1,
+        0..=4 => 0,
+        5..=8 => 1,
         _ => 2,
     }
 }
@@ -143,8 +143,15 @@ impl Terms {
     }
 }
 
+/// Typo tiers only run when the exact tier found fewer articles than this, so
+/// a common word isn't followed by lookalikes.
+pub const FUZZY_BELOW: usize = 10;
+
 /// Most fuzzy alternatives kept for one query token.
 const MAX_FUZZY: usize = 32;
+
+/// Most fold-aware prefix alternatives kept for the last query token.
+const MAX_FOLDED_PREFIX: usize = 32;
 
 /// A compiled query: one FTS5 MATCH expression per tier, best first.
 ///
@@ -153,7 +160,8 @@ const MAX_FUZZY: usize = 32;
 /// the vocabulary terms within `k` edits. A document lands in the tier of its
 /// weakest token, so the tiers never overlap. Each later tier is written as
 /// `(E_k) NOT (E_prev)`, and a tier whose expression equals the previous one
-/// is left out.
+/// is left out. `Store::search` stops after the first tier once it has
+/// `FUZZY_BELOW` articles, so the later tiers only run for a thin exact match.
 pub struct Query {
     tiers: Vec<String>,
 }
@@ -166,8 +174,28 @@ impl Query {
     }
 }
 
+/// Vocabulary words that a fold-aware prefix of `folded` reaches but FTS's
+/// `"tok"*` does not: those whose folded form starts with `folded` while the
+/// word itself does not, such as `straßen` for `strasse`. Sorted by folded
+/// form, at most `MAX_FOLDED_PREFIX`.
+fn folded_prefix<'a>(terms: &'a Terms, folded: &str) -> Vec<&'a str> {
+    let key: Vec<char> = folded.chars().collect();
+    let start = terms
+        .entries
+        .partition_point(|(f, _)| f.as_slice() < key.as_slice());
+    terms.entries[start..]
+        .iter()
+        .take_while(|(f, _)| f.starts_with(&key))
+        .filter(|(_, orig)| !orig.starts_with(folded))
+        .take(MAX_FOLDED_PREFIX)
+        .map(|(_, orig)| orig.as_str())
+        .collect()
+}
+
 /// Compiles a free-text query. `None` when it has no tokens at all. Without
 /// `terms` there is only one tier: exact words, and a prefix for the last one.
+/// With `terms`, the last token also matches the vocabulary words that
+/// `folded_prefix` finds, in every tier.
 // used by the search UI, next step
 #[allow(dead_code)]
 pub fn compile(q: &str, terms: Option<&Terms>) -> Option<Query> {
@@ -180,6 +208,8 @@ pub fn compile(q: &str, terms: Option<&Terms>) -> Option<Query> {
         return None;
     }
     let last = tokens.len() - 1;
+    let last_prefixes: Vec<&str> =
+        terms.map_or_else(Vec::new, |t| folded_prefix(t, &fold(tokens[last])));
     // Each token's vocabulary neighbours, computed once against its own edit
     // budget and sorted by distance then term. The cap applies to this list,
     // so every tier takes a prefix of the same candidates.
@@ -210,6 +240,12 @@ pub fn compile(q: &str, terms: Option<&Terms>) -> Option<Query> {
             let mut alts = vec![quote(tok)];
             if i == last {
                 alts.push(format!("{}*", quote(tok)));
+                for word in &last_prefixes {
+                    let alt = quote(word);
+                    if !alts.contains(&alt) {
+                        alts.push(alt);
+                    }
+                }
             }
             for (dist, term) in &fuzzy[i] {
                 let alt = quote(term);
@@ -289,10 +325,10 @@ mod tests {
 
     #[test]
     fn max_edits_by_length() {
-        assert_eq!(max_edits(3), 0);
-        assert_eq!(max_edits(4), 1);
-        assert_eq!(max_edits(7), 1);
-        assert_eq!(max_edits(8), 2);
+        assert_eq!(max_edits(4), 0);
+        assert_eq!(max_edits(5), 1);
+        assert_eq!(max_edits(8), 1);
+        assert_eq!(max_edits(9), 2);
     }
 
     #[test]
@@ -354,6 +390,24 @@ mod tests {
         let t = terms(&["rust"]);
         let all = tiers("rst", Some(&t));
         assert!(all.iter().all(|tier| !tier.contains("rust")), "{all:?}");
+        let four = tiers("rusk", Some(&t));
+        assert!(four.iter().all(|tier| !tier.contains("rust")), "{four:?}");
+    }
+
+    #[test]
+    fn folded_prefix_reaches_words_that_fts_prefix_misses() {
+        let t = terms(&["straßen", "strand"]);
+        let first = &tiers("strasse", Some(&t))[0];
+        assert!(first.contains("\"straßen\""), "{first}");
+        assert!(!first.contains("\"strand\""), "{first}");
+    }
+
+    #[test]
+    fn folded_prefix_skips_words_that_fts_prefix_already_covers() {
+        let t = terms(&["python"]);
+        let all = tiers("pyth", Some(&t));
+        assert_eq!(all.len(), 1);
+        assert!(!all[0].contains("\"python\""), "{}", all[0]);
     }
 
     #[test]
