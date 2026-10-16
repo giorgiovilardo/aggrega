@@ -29,14 +29,15 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
 | `src/pool.rs` | `par_map` / `par_for_each`, a tiny scoped thread pool for short blocking jobs |
 | `src/opml.rs` | OPML as plain data: `parse` reads the feeds (as `feed::Source`) out of any reader's export (nested folders flattened, duplicates dropped, via `html::tokenize`) and `write` produces an OPML 2.0 document. The import itself (subscribing in parallel, then storing) lives in `app.rs` |
-| `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes. For sync, `snapshot_to` (`VACUUM INTO`) and `replace_with` (SQLite's backup API, in one step, keeping the local theme, refresh interval, language and zoom) |
+| `src/db.rs` | `Store`: schema and migrations, queries, and transactional refresh writes. Keeps the FTS5 search index (`articles_fts`) in step with articles. For sync, `snapshot_to` (`VACUUM INTO`) and `replace_with` (SQLite's backup API, in one step, keeping the local theme, refresh interval, language and zoom) |
 | `src/sync.rs` | LAN sync, std networking only. A `Session` (alive only while the Sync tab is on screen) broadcasts a UDP beacon, collects the beacons of other copies, and serves database snapshots over TCP. `info` and `pull` are the client side |
 | `src/thumbs.rs` | Downloads images, `resize_to_fill` to 264×184, keeps a JPEG disk cache and negative cache, and returns an `image::RgbImage`. Also loads reader pictures, shrunk to fit the column (not cached) |
 | `src/reader.rs` | Reader view content: HTML → blocks (paragraph, heading, quote, bullet, code, image), main-content extraction from full web pages, and the compact line format blocks are stored in |
+| `src/search.rs` | Article search as pure logic, no SQL: plain text of a body (no code or images), letter folding, the vocabulary cache (`Terms`), and `compile`, which turns a query into tiers of FTS5 expressions with typo tolerance. `db.rs` runs them |
 | `src/i18n.rs` | Interface language (English or Italian, per thread like Slint's): `tr!`/`trn!` look Rust-built strings up in the same `.po` catalog Slint bundles, plus localised dates. Its tests check every marked string has a translation |
 | `src/text.rs` | Whitespace collapsing, truncation, relative times ("5m ago"), avatar letter and colour |
 
-Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` build on them, `fetch` adds HTTP on top of `feed`, and `app` uses everything. `db` needs only `feed`'s data types, plus `feed::is_unreachable` to tell an offline refresh from a broken source.
+Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` build on them, `search` builds on `reader`, `fetch` adds HTTP on top of `feed`, and `app` uses everything. `db` needs `feed`'s data types (plus `feed::is_unreachable` to tell an offline refresh from a broken source) and `search` for indexing.
 | `ui/theme.slint` | `Theme` global with every colour token, switched by `Theme.dark`, plus the `Icons` global |
 | `ui/app.slint` | `AppWindow`: responsive layout, header, list, toast, keyboard shortcuts, and the public API used from Rust |
 | `ui/settings.slint` | `SettingsDialog`: a large modal with a vertical tab rail (Import & export, Sync, Updates, UI, About) and the selected tab's pane, opened from the gear in the sidebar footer or `Ctrl+,`. The UI tab sets the zoom (80% to 160%); `Ctrl/Cmd` with `+`, `-` and `0` does the same from anywhere, including with Settings open. About shows the version, copyright, license, project links, this profile's data paths and the third-party credits, including the `AboutSlint` widget the Slint Royalty-free License requires |
@@ -74,18 +75,22 @@ Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` bu
 - *Next/previous* (`J`/`K`, `N`/`P`, `→`, or the chevrons in the toolbar) walk a snapshot of the list's article ids taken when the reader opened, so stories that slide out of the Unread list don't shift the order. Each step marks the story read like opening it from the list. The story after the open one is prefetched: its page (if the feed only had a teaser) is downloaded and saved to `body`, and its pictures are decoded and kept in memory until the user steps onto it or moves on. A step onto a story whose page is still downloading waits for that download rather than starting another.
 - Video sites (YouTube, Vimeo) aren't scraped. For video entries with no summary or content, the reader shows the feed's `media:description` instead (escaped, blank lines as paragraphs). **Read on …** opens the original with `open::that_detached(link)` (xdg-open on Linux).
 
-## Storage schema (`PRAGMA user_version = 2`)
+## Storage schema (`PRAGMA user_version = 3`)
 
 ```sql
 feeds(id, url UNIQUE, title, site_url, etag, last_modified, last_fetched, last_error, added_at)
 articles(id, feed_id → feeds ON DELETE CASCADE, guid, title, link, snippet, image_url,
          published, fetched_at, read, body, UNIQUE(feed_id, guid))
 settings(key PRIMARY KEY, value)            -- theme, language, last_refresh, refresh_interval, zoom
+articles_fts USING fts5(title, snippet, body, content='', contentless_delete=1)   -- search index
+articles_fts_vocab USING fts5vocab(articles_fts, row)                            -- its word list
 ```
 
 Indexes cover the hot queries: `articles(published DESC)`, `articles(feed_id, published DESC)` and `articles(feed_id, read)`. For the list, articles keep a plain-text snippet of at most 280 chars. For the reader, `body` holds the article as simplified text blocks, one per line (`p `, `h `, `q `, `l `, `c `, `i ` + text, with `\` and newlines escaped), not HTML, which keeps it compact. Version 2 added `body`; it is `NULL` for older rows, which makes the reader fetch the page. Read articles older than 90 days are pruned after each refresh.
 
-To change the schema, add an `if version < 3 { … PRAGMA user_version = 3; }` block in `Store::migrate` and bump `SCHEMA_VERSION`.
+Version 3 added the search index. It is contentless: the text lives only in the index, and the `articles_fts_delete` trigger removes a row when its article is deleted. Rust fills it as plain text (`search::body_text`, so code blocks and images are not indexed) when articles are inserted and when a body is saved. The index uses `unicode61 remove_diacritics 2`. The v3 migration creates it and backfills existing articles in one transaction.
+
+To change the schema, add an `if version < 4 { … PRAGMA user_version = 4; }` block in `Store::migrate` and bump `SCHEMA_VERSION`.
 
 ## Performance notes
 

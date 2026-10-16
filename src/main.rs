@@ -10,6 +10,7 @@ mod i18n;
 mod opml;
 mod pool;
 mod reader;
+mod search;
 mod sync;
 mod text;
 mod thumbs;

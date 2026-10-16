@@ -8,8 +8,9 @@ use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::feed::{FeedJob, FetchResult, Fetched, Source, is_unreachable};
+use crate::search;
 
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Settings that belong to this computer, kept when a sync pull replaces
 /// the database.
@@ -151,6 +152,38 @@ impl Store {
                 "ALTER TABLE articles ADD COLUMN body TEXT;
                  PRAGMA user_version = 2;",
             )?;
+        }
+        if version < 3 {
+            // Full-text index for search. It is contentless (the text lives only
+            // in the index), filled from Rust as plain text by `index_article`, and
+            // the trigger removes a row whenever its article is deleted. The
+            // backfill runs in the same transaction, so a failure leaves v2 intact.
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(
+                "CREATE VIRTUAL TABLE articles_fts USING fts5(
+                     title, snippet, body,
+                     content='', contentless_delete=1,
+                     tokenize='unicode61 remove_diacritics 2');
+                 CREATE VIRTUAL TABLE articles_fts_vocab USING fts5vocab(articles_fts, row);
+                 CREATE TRIGGER articles_fts_delete AFTER DELETE ON articles
+                 BEGIN DELETE FROM articles_fts WHERE rowid = old.id; END;",
+            )?;
+            {
+                let mut select = tx.prepare("SELECT id, title, snippet, body FROM articles")?;
+                let mut rows = select.query([])?;
+                while let Some(r) = rows.next()? {
+                    let body: Option<String> = r.get(3)?;
+                    index_article(
+                        &tx,
+                        r.get(0)?,
+                        &r.get::<_, String>(1)?,
+                        &r.get::<_, String>(2)?,
+                        &search::body_text(body.as_deref().unwrap_or("")),
+                    )?;
+                }
+            }
+            tx.execute_batch("PRAGMA user_version = 3;")?;
+            tx.commit()?;
         }
         Ok(())
     }
@@ -316,20 +349,68 @@ impl Store {
         )?;
         let rows = stmt.query_map(
             params![filter.feed, filter.unread_only, limit as i64],
-            |r| {
-                Ok(Article {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    link: r.get(2)?,
-                    snippet: r.get(3)?,
-                    image_url: r.get(4)?,
-                    published: r.get(5)?,
-                    read: r.get(6)?,
-                    feed_title: r.get(7)?,
-                })
-            },
+            article_row,
         )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Articles matching `query`, best tier first and newest first within a
+    /// tier, up to `limit`. Later tiers only run while there is room left.
+    // used by the search UI, next step
+    #[allow(dead_code)]
+    pub fn search(
+        &self,
+        filter: ArticleFilter,
+        query: &search::Query,
+        limit: usize,
+    ) -> Result<Vec<Article>> {
+        let mut found = Vec::new();
+        for expr in query.tiers() {
+            if found.len() >= limit {
+                break;
+            }
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT a.id, a.title, a.link, a.snippet, a.image_url, a.published, a.read, f.title
+                 FROM articles a JOIN feeds f ON f.id = a.feed_id
+                 WHERE (?1 IS NULL OR a.feed_id = ?1) AND (?2 = 0 OR a.read = 0)
+                   AND a.id IN (SELECT rowid FROM articles_fts WHERE articles_fts MATCH ?3)
+                 ORDER BY a.published DESC, a.id DESC
+                 LIMIT ?4",
+            )?;
+            let rows = stmt.query_map(
+                params![
+                    filter.feed,
+                    filter.unread_only,
+                    expr,
+                    (limit - found.len()) as i64
+                ],
+                article_row,
+            )?;
+            found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        Ok(found)
+    }
+
+    /// Every distinct word in the search index, folded as the index folds it.
+    // used by the search UI, next step
+    #[allow(dead_code)]
+    pub fn search_terms(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT term FROM articles_fts_vocab")?;
+        Ok(stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Changes whenever another connection writes to the database, so a
+    /// reader can tell that its cached data has gone stale.
+    // used by the search UI, next step
+    #[allow(dead_code)]
+    pub fn data_version(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA data_version", [], |r| r.get(0))?)
     }
 
     pub fn reader_article(&self, id: i64) -> Result<Option<ReaderArticle>> {
@@ -356,10 +437,18 @@ impl Store {
 
     /// Saves reader content fetched from the article's web page.
     pub fn set_body(&self, article: i64, body: &str) -> Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE articles SET body = ?2 WHERE id = ?1",
             params![article, body],
         )?;
+        tx.execute("DELETE FROM articles_fts WHERE rowid = ?1", [article])?;
+        tx.execute(
+            "INSERT INTO articles_fts(rowid, title, snippet, body)
+             SELECT id, title, snippet, ?2 FROM articles WHERE id = ?1",
+            params![article, search::body_text(body)],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -468,7 +557,9 @@ fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result
     let ts = now();
     let mut n = 0;
     for a in &fetched.articles {
-        n += stmt.execute(params![
+        // Only new rows are indexed: a repeated guid is ignored, and must not
+        // add a second index row.
+        let inserted = stmt.execute(params![
             feed_id,
             a.guid,
             a.title,
@@ -479,14 +570,49 @@ fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result
             ts,
             a.body
         ])?;
+        if inserted == 1 {
+            index_article(
+                conn,
+                conn.last_insert_rowid(),
+                &a.title,
+                &a.snippet,
+                &search::body_text(&a.body),
+            )?;
+        }
+        n += inserted;
     }
     Ok(n)
+}
+
+/// Adds one article to the search index. `body` is already plain text.
+fn index_article(conn: &Connection, id: i64, title: &str, snippet: &str, body: &str) -> Result<()> {
+    conn.prepare_cached(
+        "INSERT INTO articles_fts(rowid, title, snippet, body) VALUES (?1, ?2, ?3, ?4)",
+    )?
+    .execute(params![id, title, snippet, body])?;
+    Ok(())
+}
+
+fn article_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Article> {
+    Ok(Article {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        link: r.get(2)?,
+        snippet: r.get(3)?,
+        image_url: r.get(4)?,
+        published: r.get(5)?,
+        read: r.get(6)?,
+        feed_title: r.get(7)?,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::feed::NewArticle;
+    use crate::reader::{self, Block, Kind};
+    use crate::search::corpus;
+    use std::collections::{BTreeMap, HashMap};
 
     fn sample(n: usize) -> Fetched {
         Fetched {
@@ -720,6 +846,359 @@ mod tests {
                 },
             ]
         );
+        Ok(())
+    }
+
+    /// A feed whose articles have these titles; later entries are newer.
+    fn titled(title: &str, articles: &[&str]) -> Fetched {
+        Fetched {
+            title: title.into(),
+            site_url: None,
+            etag: None,
+            last_modified: None,
+            articles: articles
+                .iter()
+                .enumerate()
+                .map(|(i, t)| NewArticle {
+                    guid: t.to_string(),
+                    title: t.to_string(),
+                    link: format!("https://x.org/{i}"),
+                    snippet: String::new(),
+                    image_url: None,
+                    published: 1_700_000_000 + i as i64,
+                    body: String::new(),
+                })
+                .collect(),
+        }
+    }
+
+    /// A database as release 2 created it: the v1 tables plus `articles.body`.
+    fn write_v2_database(path: &std::path::Path) -> Result<()> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "CREATE TABLE feeds (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL, site_url TEXT, etag TEXT, last_modified TEXT,
+                last_fetched INTEGER, last_error TEXT, added_at INTEGER NOT NULL);
+             CREATE TABLE articles (id INTEGER PRIMARY KEY,
+                feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                guid TEXT NOT NULL, title TEXT NOT NULL, link TEXT NOT NULL,
+                snippet TEXT NOT NULL, image_url TEXT, published INTEGER NOT NULL,
+                fetched_at INTEGER NOT NULL, read INTEGER NOT NULL DEFAULT 0,
+                body TEXT, UNIQUE (feed_id, guid));
+             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO feeds VALUES (1, 'https://x.org/rss', 'Old', NULL, NULL, NULL, NULL, NULL, 0);
+             PRAGMA user_version = 2;",
+        )?;
+        let body = reader::encode(&[
+            Block::new(Kind::Heading, "Heading words"),
+            Block::new(Kind::Paragraph, "Prose about lighthouses."),
+            Block::new(Kind::Code, "secretcodeword()"),
+        ]);
+        conn.execute(
+            "INSERT INTO articles (feed_id, guid, title, link, snippet, published, fetched_at, body)
+             VALUES (1, 'a', 'Ferrovie nuove', 'https://x.org/a', 'Snippet here', 300, 0, NULL)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO articles (feed_id, guid, title, link, snippet, published, fetched_at, body)
+             VALUES (1, 'b', 'With body', 'https://x.org/b', 'Summary', 200, 0, ?1)",
+            params![body],
+        )?;
+        Ok(())
+    }
+
+    /// Titles of the articles `q` finds, searched the way the UI does: with
+    /// the store's own vocabulary for typo tolerance.
+    fn found_in(
+        store: &Store,
+        q: &str,
+        filter: ArticleFilter,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let terms = search::Terms::new(store.search_terms()?);
+        let query = search::compile(q, Some(&terms)).expect("query has tokens");
+        Ok(store
+            .search(filter, &query, limit)?
+            .into_iter()
+            .map(|a| a.title)
+            .collect())
+    }
+
+    fn found(store: &Store, q: &str) -> Result<Vec<String>> {
+        found_in(store, q, ArticleFilter::default(), 50)
+    }
+
+    /// Every `(term, doc, cnt)` row of the vocabulary table. Not asserted on:
+    /// it shows what the index keeps after deletes.
+    fn vocab(store: &Store) -> Result<Vec<(String, i64, i64)>> {
+        Ok(store
+            .conn
+            .prepare("SELECT term, doc, cnt FROM articles_fts_vocab")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Rows of the search index that contain `term`.
+    fn index_docs(store: &Store, term: &str) -> Result<i64> {
+        Ok(store
+            .conn
+            .query_row(
+                "SELECT doc FROM articles_fts_vocab WHERE term = ?1",
+                [term],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    #[test]
+    fn migrating_v2_builds_a_search_index() -> Result<()> {
+        let dir = temp_dir("migrate-v2");
+        let path = dir.path().join("t.db");
+        write_v2_database(&path)?;
+        let store = Store::open(&path)?;
+        let version: i32 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // A NULL body is searchable by title and snippet.
+        assert_eq!(found(&store, "ferrovie")?, ["Ferrovie nuove"]);
+        assert_eq!(found(&store, "snippet")?, ["Ferrovie nuove"]);
+        // Encoded bodies are indexed as prose, but not their code blocks.
+        assert_eq!(found(&store, "lighthouses")?, ["With body"]);
+        assert_eq!(found(&store, "heading")?, ["With body"]);
+        assert!(found(&store, "secretcodeword")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn replacing_with_a_v2_snapshot_indexes_it() -> Result<()> {
+        let dir = temp_dir("replace-v2");
+        let snapshot = dir.path().join("v2.db");
+        write_v2_database(&snapshot)?;
+        let mut ours = Store::open(&dir.path().join("ours.db"))?;
+        ours.add_feed("https://y.org/feed", &titled("Mine", &["Local story"]))?;
+        ours.replace_with(&snapshot)?;
+        assert_eq!(found(&ours, "lighthouses")?, ["With body"]);
+        assert_eq!(found(&ours, "ferrovie")?, ["Ferrovie nuove"]);
+        assert!(found(&ours, "local")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn new_articles_are_indexed_once() -> Result<()> {
+        let dir = temp_dir("index-once");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        let feed = store.add_feed("https://x.org/rss", &sample(3))?.id;
+        assert_eq!(index_docs(&store, "post")?, 3);
+        assert_eq!(index_docs(&store, "body")?, 3);
+
+        // The same guids again: nothing new, and no second index row.
+        store.apply_refresh(vec![(feed, Ok(Some(sample(3))))])?;
+        assert_eq!(index_docs(&store, "post")?, 3);
+
+        store.apply_refresh(vec![(feed, Ok(Some(sample(4))))])?;
+        assert_eq!(index_docs(&store, "post")?, 4);
+        assert_eq!(found(&store, "post 3")?, ["Post 3"]);
+        Ok(())
+    }
+
+    #[test]
+    fn set_body_reindexes_the_article() -> Result<()> {
+        let dir = temp_dir("set-body");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        let feed = store.add_feed("https://x.org/rss", &sample(2))?.id;
+        let id = store.articles(
+            ArticleFilter {
+                feed: Some(feed),
+                ..Default::default()
+            },
+            1,
+        )?[0]
+            .id;
+        assert_eq!(found(&store, "body")?.len(), 2);
+
+        let page = reader::encode(&[Block::new(Kind::Paragraph, "Full page about lighthouses")]);
+        store.set_body(id, &page)?;
+        assert_eq!(found(&store, "lighthouses")?, ["Post 1"]);
+        assert_eq!(found(&store, "body")?, ["Post 0"], "the old body is gone");
+        assert_eq!(
+            found(&store, "post")?.len(),
+            2,
+            "the title is still indexed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn removing_feeds_and_pruning_drop_index_rows() -> Result<()> {
+        let dir = temp_dir("index-delete");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        let keep = store.add_feed("https://x.org/rss", &titled("Keep", &["Lighthouse keeper"]))?;
+        let gone = store.add_feed("https://y.org/feed", &titled("Gone", &["Lighthouse tower"]))?;
+        assert_eq!(found(&store, "lighthouse")?.len(), 2);
+
+        store.remove_feed(gone.id)?;
+        assert_eq!(found(&store, "lighthouse")?, ["Lighthouse keeper"]);
+        println!("vocab after remove_feed: {:?}", vocab(&store)?);
+
+        // Read articles older than 90 days are pruned by the next refresh.
+        let article = store.articles(
+            ArticleFilter {
+                feed: Some(keep.id),
+                ..Default::default()
+            },
+            1,
+        )?[0]
+            .id;
+        store.set_read(article, true)?;
+        store.apply_refresh(vec![])?;
+        assert!(found(&store, "lighthouse")?.is_empty());
+
+        println!("vocab after prune: {:?}", vocab(&store)?);
+        Ok(())
+    }
+
+    #[test]
+    fn exact_matches_come_before_typos_and_newest_first_within_a_tier() -> Result<()> {
+        let dir = temp_dir("tiers");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        store.add_feed(
+            "https://x.org/rss",
+            &titled("Feed", &["Kernel old", "Kernal typo", "Kernel new"]),
+        )?;
+        let other = store.add_feed(
+            "https://y.org/feed",
+            &titled("Other", &["Kernel elsewhere"]),
+        )?;
+        let all = ArticleFilter::default();
+        assert_eq!(
+            found(&store, "kernel")?,
+            [
+                "Kernel new",
+                "Kernel elsewhere",
+                "Kernel old",
+                "Kernal typo"
+            ]
+        );
+        assert_eq!(
+            found_in(&store, "kernel", all, 2)?,
+            ["Kernel new", "Kernel elsewhere"]
+        );
+        assert!(found_in(&store, "kernel", all, 0)?.is_empty());
+
+        let only_other = ArticleFilter {
+            feed: Some(other.id),
+            ..Default::default()
+        };
+        assert_eq!(
+            found_in(&store, "kernel", only_other, 50)?,
+            ["Kernel elsewhere"]
+        );
+
+        let newest = store.articles(ArticleFilter::default(), 1)?[0].id;
+        store.set_read(newest, true)?;
+        let unread = ArticleFilter {
+            unread_only: true,
+            ..Default::default()
+        };
+        let titles = found_in(&store, "kernel", unread, 50)?;
+        assert!(!titles.contains(&"Kernel new".to_string()), "{titles:?}");
+        assert!(titles.contains(&"Kernal typo".to_string()), "{titles:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn data_version_changes_when_another_connection_writes() -> Result<()> {
+        let dir = temp_dir("data-version");
+        let path = dir.path().join("t.db");
+        let store = Store::open(&path)?;
+        let other = Store::open(&path)?;
+        let before = store.data_version()?;
+        other.set_setting("zoom", "100")?;
+        assert_ne!(store.data_version()?, before);
+        Ok(())
+    }
+
+    /// Runs every corpus case through the UI's search path and prints a score
+    /// table. The exact, diacritics, prefix and cyrillic kinds must all pass.
+    #[test]
+    fn corpus_search_scores() -> Result<()> {
+        let dir = temp_dir("corpus");
+        let store = Store::open(&dir.path().join("t.db"))?;
+        let docs = corpus::docs();
+        store.add_feed(
+            "https://corpus.org/rss",
+            &Fetched {
+                title: "Corpus".into(),
+                site_url: None,
+                etag: None,
+                last_modified: None,
+                articles: docs
+                    .iter()
+                    .map(|d| NewArticle {
+                        guid: d.id.to_string(),
+                        title: d.title.clone(),
+                        link: format!("https://corpus.org/{}", d.id),
+                        snippet: d.snippet.clone(),
+                        image_url: None,
+                        published: 1_700_000_000 + d.id,
+                        body: reader::encode(&[Block::new(Kind::Paragraph, d.body.clone())]),
+                    })
+                    .collect(),
+            },
+        )?;
+        // Article row id -> corpus id, which was stored as the guid.
+        let corpus_id: HashMap<i64, i64> = {
+            let mut stmt = store.conn.prepare("SELECT id, guid FROM articles")?;
+            let rows = stmt.query_map([], |r| {
+                let guid: String = r.get(1)?;
+                Ok((r.get(0)?, guid.parse().unwrap_or(-1)))
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+
+        let terms = search::Terms::new(store.search_terms()?);
+        println!("vocabulary: {} terms", terms.len());
+        let strict = ["exact", "diacritics", "prefix", "cyrillic"];
+        let mut table: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut strict_failures: Vec<&str> = Vec::new();
+        for c in corpus::cases() {
+            let query = search::compile(c.query, Some(&terms)).expect("corpus queries have tokens");
+            let results: Vec<i64> = store
+                .search(ArticleFilter::default(), &query, 50)?
+                .iter()
+                .filter_map(|a| corpus_id.get(&a.id).copied())
+                .collect();
+            let entry = table.entry(c.kind).or_default();
+            entry.1 += 1;
+            if corpus::score(&results, &c) {
+                entry.0 += 1;
+            } else {
+                failures.push(format!(
+                    "[{}] {:?} expect {:?} got {:?}\n      tiers {:?}",
+                    c.kind,
+                    c.query,
+                    c.expect,
+                    results,
+                    query.tiers()
+                ));
+                if strict.contains(&c.kind) {
+                    strict_failures.push(c.query);
+                }
+            }
+        }
+        println!("{:<20} {:>6} {:>6}", "kind", "pass", "total");
+        for (kind, (pass, total)) in &table {
+            println!("{kind:<20} {pass:>6} {total:>6}");
+        }
+        println!("failing cases ({}):", failures.len());
+        for f in &failures {
+            println!("  {f}");
+        }
+        assert!(strict_failures.is_empty(), "failed: {strict_failures:?}");
         Ok(())
     }
 }
