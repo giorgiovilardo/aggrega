@@ -15,7 +15,7 @@ use slint::{
     VecModel,
 };
 
-use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
+use crate::db::{ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
 use crate::feed::{self, Source};
 use crate::i18n::{self, Lang, tr, trn};
 use crate::opml;
@@ -348,14 +348,14 @@ impl App {
 
     pub fn reload_articles(&self) {
         let ui = self.ui();
-        let rows =
-            match self
-                .store
-                .articles(self.selected_feed(), ui.get_unread_only(), MAX_ARTICLES)
-            {
-                Ok(r) => r,
-                Err(e) => return self.report(tr!("Couldn't load articles"), e),
-            };
+        let filter = ArticleFilter {
+            feed: self.selected_feed(),
+            unread_only: ui.get_unread_only(),
+        };
+        let rows = match self.store.articles(filter, MAX_ARTICLES) {
+            Ok(r) => r,
+            Err(e) => return self.report(tr!("Couldn't load articles"), e),
+        };
         let now = now();
         let mut wanted = Vec::new();
         let items: Vec<ArticleItem> = {
@@ -1779,7 +1779,7 @@ mod tests {
     /// The read flag as stored, bypassing the list model.
     fn read_in_db(app: &App, id: i64) -> bool {
         app.store
-            .articles(None, false, 10)
+            .articles(ArticleFilter::default(), 10)
             .unwrap()
             .into_iter()
             .find(|a| a.id == id)

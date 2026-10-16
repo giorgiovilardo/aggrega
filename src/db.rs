@@ -39,6 +39,15 @@ pub struct Article {
     pub feed_title: String,
 }
 
+/// Which articles `Store::articles` returns.
+#[derive(Clone, Copy, Default)]
+pub struct ArticleFilter {
+    /// Only this feed's articles; all feeds when `None`.
+    pub feed: Option<i64>,
+    /// Only unread articles.
+    pub unread_only: bool,
+}
+
 /// Everything the reader view needs for one article.
 #[derive(Debug, Clone)]
 pub struct ReaderArticle {
@@ -297,12 +306,7 @@ impl Store {
     // ---- articles -------------------------------------------------------
 
     /// Most recent articles, optionally restricted to one feed and/or unread ones.
-    pub fn articles(
-        &self,
-        feed: Option<i64>,
-        unread_only: bool,
-        limit: usize,
-    ) -> Result<Vec<Article>> {
+    pub fn articles(&self, filter: ArticleFilter, limit: usize) -> Result<Vec<Article>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT a.id, a.title, a.link, a.snippet, a.image_url, a.published, a.read, f.title
              FROM articles a JOIN feeds f ON f.id = a.feed_id
@@ -310,18 +314,21 @@ impl Store {
              ORDER BY a.published DESC, a.id DESC
              LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![feed, unread_only, limit as i64], |r| {
-            Ok(Article {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                link: r.get(2)?,
-                snippet: r.get(3)?,
-                image_url: r.get(4)?,
-                published: r.get(5)?,
-                read: r.get(6)?,
-                feed_title: r.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![filter.feed, filter.unread_only, limit as i64],
+            |r| {
+                Ok(Article {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    link: r.get(2)?,
+                    snippet: r.get(3)?,
+                    image_url: r.get(4)?,
+                    published: r.get(5)?,
+                    read: r.get(6)?,
+                    feed_title: r.get(7)?,
+                })
+            },
+        )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -513,7 +520,14 @@ mod tests {
         let dir = temp_dir("reader");
         let store = Store::open(&dir.path().join("t.db"))?;
         let feed = store.add_feed("https://x.org/rss", &sample(2))?.id;
-        let id = store.articles(Some(feed), false, 1)?[0].id;
+        let id = store.articles(
+            ArticleFilter {
+                feed: Some(feed),
+                ..Default::default()
+            },
+            1,
+        )?[0]
+            .id;
 
         let a = store.reader_article(id)?.expect("article exists");
         assert_eq!(a.title, "Post 1");
@@ -553,7 +567,7 @@ mod tests {
             )?;
         }
         let store = Store::open(&path)?;
-        let id = store.articles(None, false, 10)?[0].id;
+        let id = store.articles(ArticleFilter::default(), 10)?[0].id;
         let a = store.reader_article(id)?.unwrap();
         assert_eq!(a.title, "Old post");
         assert_eq!(a.body, None, "old articles have no stored body");
@@ -572,12 +586,16 @@ mod tests {
         assert_eq!(added.articles, 3);
         assert!(store.add_feed("https://x.org/rss", &sample(1)).is_err());
 
-        let all = store.articles(None, false, 10)?;
+        let all = store.articles(ArticleFilter::default(), 10)?;
         assert_eq!(all.len(), 3);
         assert_eq!(all[0].title, "Post 2", "newest first");
 
         store.set_read(all[0].id, true)?;
-        assert_eq!(store.articles(Some(id), true, 10)?.len(), 2);
+        let unread_here = ArticleFilter {
+            feed: Some(id),
+            unread_only: true,
+        };
+        assert_eq!(store.articles(unread_here, 10)?.len(), 2);
         assert_eq!(store.feeds()?[0].unread, 2);
 
         // Refreshing with the same items adds nothing.
@@ -585,15 +603,15 @@ mod tests {
         assert_eq!(s.new_articles, 1);
 
         // Being offline neither marks the source as broken nor loses articles.
-        let before = store.articles(None, false, 10)?.len();
+        let before = store.articles(ArticleFilter::default(), 10)?.len();
         let offline = anyhow::Error::new(crate::feed::Unreachable("offline".into()));
         let s = store.apply_refresh(vec![(id, Err(offline))])?;
         assert!(s.offline());
         assert!(!store.feeds()?[0].has_error);
-        assert_eq!(store.articles(None, false, 10)?.len(), before);
+        assert_eq!(store.articles(ArticleFilter::default(), 10)?.len(), before);
 
         store.remove_feed(id)?;
-        assert!(store.articles(None, false, 10)?.is_empty());
+        assert!(store.articles(ArticleFilter::default(), 10)?.is_empty());
         Ok(())
     }
 
@@ -602,7 +620,14 @@ mod tests {
         let dir = temp_dir("replace");
         let theirs = Store::open(&dir.path().join("theirs.db"))?;
         let feed = theirs.add_feed("https://x.org/rss", &sample(3))?.id;
-        let first = theirs.articles(Some(feed), false, 1)?[0].id;
+        let first = theirs.articles(
+            ArticleFilter {
+                feed: Some(feed),
+                ..Default::default()
+            },
+            1,
+        )?[0]
+            .id;
         theirs.set_read(first, true)?;
         theirs.set_setting("theme", "dark")?;
         theirs.set_setting("last_refresh", "123")?;
