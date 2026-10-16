@@ -17,6 +17,7 @@
 - **OPML import and export.** Bring your subscriptions over from Feedly, Inoreader, NetNewsWire, Miniflux or any other reader: **Settings → Import & export**, or **Import from OPML** on the welcome screen. Folders are flattened, sources you already follow are skipped, and Aggrega tells you how many were added, skipped or couldn't be reached. Export writes every source to a standard OPML 2.0 file.
 - **Sync between computers.** Moving to another machine? Open **Settings → Sync** on both: each lists the other copies of Aggrega on the same network (or type the other computer's address, shown on its Sync tab). Pull from one and, after you confirm, its sources, articles and read state replace everything on this computer; your theme, language and refresh interval stay. It works between macOS and Linux. Nothing listens or announces itself unless the Sync tab is on screen, and the transfer is not encrypted, so use it on networks you trust.
 - **Newest posts first.** The list merges every source into one feed sorted by date. You can also focus on a single source from the sidebar.
+- **Search.** The field in the header finds stories by title, summary and text, within the source and tab you are looking at. It forgives typos, and it searches as you type.
 - **Works offline.** Everything you've downloaded, including stories and thumbnails, stays readable without a connection. When no source can be reached, Aggrega says it's offline instead of flagging your sources as broken, and it retries the next time you refresh.
 - **Refreshes on launch, on demand and on its own.** Cached articles show up immediately, and fresh ones are fetched in parallel in the background. While Aggrega is open it refreshes again every 20 minutes, which you can change from 5 minutes to 2 hours in **Settings → Updates**. Background refreshes only toast when they find new stories, and they pause while you're offline until you refresh by hand. Aggrega sends conditional requests (ETag / Last-Modified), so feeds that haven't changed cost almost nothing.
 - **Unread highlighting.** Unread stories get a red dot before the kicker and a black-weight headline. Read ones drop to a lighter grey headline with a dimmed photo. Each source shows its unread count. The **Unread** tab is the default view; stories you read there slide out of the list right away. *All* shows everything, and *Mark all as read* clears the view.
@@ -37,10 +38,11 @@
 | `F5` / `Ctrl+R` | Refresh all sources |
 | `Ctrl+N` | Add a source |
 | `Ctrl+,` | Open settings |
+| `Ctrl/Cmd` + `F` or `/` | Search the stories in view (closes the reader) |
 | `Ctrl/Cmd` + `+` / `-` | Zoom the whole window in / out (80% to 160%) |
 | `Ctrl/Cmd` + `0` | Back to 100% zoom |
 | `Enter` | Confirm in the "Add source" dialog |
-| `Esc` | Close dialogs, or close the reader |
+| `Esc` | Close dialogs, close the reader, or clear the search |
 | `Backspace` / `←` | Back to the list (reader) |
 | `↑` / `↓`, `Space` / `Shift+Space`, `PgUp` / `PgDn`, `Home` / `End` | Scroll the article (reader) |
 | `O` | Open the original page in your browser (reader) |

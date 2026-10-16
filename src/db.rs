@@ -357,8 +357,6 @@ impl Store {
     /// Articles matching `query`, best tier first and newest first within a
     /// tier, up to `limit`. Later tiers only run while there is room left, and
     /// typo tiers only when the exact tier found fewer than `search::FUZZY_BELOW`.
-    // used by the search UI, next step
-    #[allow(dead_code)]
     pub fn search(
         &self,
         filter: ArticleFilter,
@@ -396,8 +394,6 @@ impl Store {
     }
 
     /// Every distinct word in the search index, folded as the index folds it.
-    // used by the search UI, next step
-    #[allow(dead_code)]
     pub fn search_terms(&self) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
@@ -409,8 +405,6 @@ impl Store {
 
     /// Changes whenever another connection writes to the database, so a
     /// reader can tell that its cached data has gone stale.
-    // used by the search UI, next step
-    #[allow(dead_code)]
     pub fn data_version(&self) -> Result<i64> {
         Ok(self
             .conn

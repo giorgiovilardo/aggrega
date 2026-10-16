@@ -43,6 +43,7 @@ fn setup(ui: &AppWindow, store: Store, paths: Paths) -> Result<Rc<App>> {
     ui.on_open_article(|row| with_app(|a| a.open_article(row as usize)));
     ui.on_toggle_read(|row| with_app(|a| a.toggle_read(row as usize)));
     ui.on_filter_changed(|| with_app(|a| a.reload_all()));
+    ui.on_search_changed(|| with_app(|a| a.search_changed()));
     ui.on_mark_all_read(|| with_app(|a| a.mark_all_read()));
     ui.on_add_feed(|url| with_app(|a| a.add_feed(url)));
     ui.on_remove_feed(|id| with_app(|a| a.remove_feed(id)));
@@ -92,6 +93,7 @@ fn main() -> Result<()> {
 
     // Show cached articles instantly, then fetch fresh ones in the background.
     app.reload_all();
+    app.load_terms();
     app.refresh();
 
     let clock = slint::Timer::default();

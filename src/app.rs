@@ -15,11 +15,12 @@ use slint::{
     VecModel,
 };
 
-use crate::db::{ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
+use crate::db::{Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
 use crate::feed::{self, Source};
 use crate::i18n::{self, Lang, tr, trn};
 use crate::opml;
 use crate::reader::{self, Block, Kind};
+use crate::search;
 use crate::{
     AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, SyncPeer, fetch, pool,
     sync, text, thumbs,
@@ -31,6 +32,9 @@ const MAX_ARTICLES: usize = 400;
 /// How long a row takes to animate out before it is removed from the list
 /// (matches the fade + collapse in `ui/article-card.slint`).
 const LEAVE_ANIMATION: Duration = Duration::from_millis(560);
+
+/// Pause after the last keystroke before the search runs.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 
 /// Background refresh interval choices in minutes, offered by the stepper in
 /// Settings › Updates. Saved values are clamped to the first and last.
@@ -199,6 +203,15 @@ pub struct App {
     /// The scale factor last dispatched for zoom, to tell our own changes
     /// from the window system resetting it (say, on a monitor change).
     applied_scale: Cell<Option<f32>>,
+    /// The article search vocabulary, folded for typo tolerance (see `load_terms`).
+    terms: RefCell<Option<search::Terms>>,
+    /// The `data_version` the vocabulary was read at, or `None` when it is stale.
+    terms_stamp: Cell<Option<i64>>,
+    terms_loading: Cell<bool>,
+    /// This connection wrote indexed text since the running read started.
+    terms_dirty: Cell<bool>,
+    /// Runs the search once typing pauses.
+    search_timer: slint::Timer,
 }
 
 impl App {
@@ -272,6 +285,11 @@ impl App {
             pulling: Cell::new(false),
             zoom: Cell::new(zoom),
             applied_scale: Cell::new(None),
+            terms: RefCell::default(),
+            terms_stamp: Cell::new(None),
+            terms_loading: Cell::new(false),
+            terms_dirty: Cell::new(false),
+            search_timer: slint::Timer::default(),
         });
         APP.with(|cell| {
             let _ = cell.set(app.clone());
@@ -352,7 +370,15 @@ impl App {
             feed: self.selected_feed(),
             unread_only: ui.get_unread_only(),
         };
-        let rows = match self.store.articles(filter, MAX_ARTICLES) {
+        let text = ui.get_search_text();
+        let searching = !text.trim().is_empty();
+        ui.set_searching(searching);
+        let rows = if searching {
+            self.search_articles(filter, &text)
+        } else {
+            self.store.articles(filter, MAX_ARTICLES)
+        };
+        let rows = match rows {
             Ok(r) => r,
             Err(e) => return self.report(tr!("Couldn't load articles"), e),
         };
@@ -398,13 +424,95 @@ impl App {
         }
         *self.article_ts.borrow_mut() = rows.iter().map(|a| a.published).collect();
         self.articles.set_vec(items);
+        self.update_status();
         wanted.dedup();
         self.load_thumbs(wanted);
     }
 
+    /// Articles matching `text` in the view `filter` describes. Reads the
+    /// vocabulary again first if it is stale; this search uses what is cached.
+    fn search_articles(&self, filter: ArticleFilter, text: &str) -> Result<Vec<Article>> {
+        if self
+            .terms_stamp
+            .get()
+            .is_none_or(|v| self.store.data_version().ok() != Some(v))
+        {
+            self.load_terms();
+        }
+        match search::compile(text, self.terms.borrow().as_ref()) {
+            Some(query) => self.store.search(filter, &query, MAX_ARTICLES),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Reads the search vocabulary on a worker. Does nothing while a read is
+    /// running; `terms_ready` stores the result.
+    pub fn load_terms(&self) {
+        if self.terms_loading.get() {
+            return;
+        }
+        let Ok(version) = self.store.data_version() else {
+            return;
+        };
+        self.terms_loading.set(true);
+        self.terms_dirty.set(false);
+        let db_path = self.paths.db.clone();
+        std::thread::spawn(move || {
+            let terms = Store::open(&db_path)
+                .and_then(|s| s.search_terms())
+                .map(search::Terms::new)
+                .map_err(|e| format!("{e:#}"));
+            let _ = slint::invoke_from_event_loop(move || {
+                with_app(|app| app.terms_ready(version, terms))
+            });
+        });
+    }
+
+    fn terms_ready(&self, version: i64, terms: Result<search::Terms, String>) {
+        self.terms_loading.set(false);
+        let terms = match terms {
+            Ok(terms) => terms,
+            Err(e) => {
+                eprintln!("aggrega: couldn't read the search vocabulary: {e}");
+                return;
+            }
+        };
+        *self.terms.borrow_mut() = Some(terms);
+        // Indexed text written here while the read ran may be missing from it.
+        self.terms_stamp
+            .set((!self.terms_dirty.get()).then_some(version));
+        if self.ui().get_searching() {
+            self.reload_articles();
+        }
+    }
+
+    /// Writes on this connection don't change `data_version`, so the cached
+    /// vocabulary is marked stale by hand. The next search reads it again.
+    fn terms_changed(&self) {
+        self.terms_stamp.set(None);
+        self.terms_dirty.set(true);
+    }
+
+    /// The search field was edited. Clearing it shows the list at once;
+    /// typing waits for a short pause first.
+    pub fn search_changed(&self) {
+        if self.ui().get_search_text().trim().is_empty() {
+            self.search_timer.stop();
+            self.reload_articles();
+        } else {
+            self.search_timer
+                .start(slint::TimerMode::SingleShot, SEARCH_DEBOUNCE, || {
+                    with_app(|a| a.reload_articles())
+                });
+        }
+    }
+
     fn update_status(&self) {
         let ui = self.ui();
-        let status = if self.refreshing.get() {
+        let status = if ui.get_searching() {
+            let n = self.articles.iter().filter(|a| !a.leaving).count();
+            trn!(n, "{n} match", "{n} matches")
+        } else if self.refreshing.get() {
             tr!("Refreshing your sources…")
         } else {
             let unread = if ui.get_selected_feed() < 0 {
@@ -558,6 +666,7 @@ impl App {
         // The next automatic refresh is a full interval after this one.
         self.auto_refresh.restart();
         self.reload_all();
+        self.load_terms();
         match summary {
             // In the background, only news is worth a toast; the status line
             // already tells when it last updated, or that it's offline.
@@ -809,6 +918,7 @@ impl App {
         let note = match result {
             Ok(page) if reader::text_len(&page) > shown => {
                 // Keep it, so the article opens instantly (and offline) next time.
+                self.terms_changed();
                 if let Err(e) = self.store.set_body(id, &reader::encode(&page)) {
                     eprintln!("aggrega: couldn't save article text: {e:#}");
                 }
@@ -1027,6 +1137,8 @@ impl App {
                 }
             }
         }
+        drop(ts);
+        self.update_status();
     }
 
     pub fn mark_all_read(&self) {
@@ -1114,6 +1226,7 @@ impl App {
             .find(|f| f.id == id)
             .map(|f| f.title.to_string())
             .unwrap_or_default();
+        self.terms_changed();
         if let Err(e) = self.store.remove_feed(id as i64) {
             return self.report(tr!("Couldn't remove source"), e);
         }
@@ -1397,6 +1510,8 @@ impl App {
         ui.invoke_hide_reader();
         ui.set_selected_feed(-1);
         self.thumb_failed.borrow_mut().clear();
+        self.terms_changed();
+        self.load_terms();
         self.offline.set(false);
         self.last_refresh.set(
             self.store
@@ -2637,6 +2752,212 @@ mod tests {
         // Unknown codes are ignored.
         with_app(|a| a.change_language("xx".into()));
         assert_eq!(ui.get_language(), "en");
+    }
+
+    fn titles(app: &App) -> Vec<String> {
+        let mut titles: Vec<String> = (0..app.articles.row_count())
+            .map(|i| app.articles.row_data(i).unwrap().title.to_string())
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    fn id_of(app: &App, title: &str) -> i64 {
+        app.store
+            .articles(ArticleFilter::default(), 10)
+            .unwrap()
+            .into_iter()
+            .find(|a| a.title == title)
+            .expect("article is in the database")
+            .id
+    }
+
+    /// Types `text` into the field: the text changes, then the debounce runs.
+    fn search_for(ui: &AppWindow, app: &App, text: &str) {
+        ui.set_search_text(text.into());
+        app.search_changed();
+        testing::mock_elapsed_time(Duration::from_millis(200));
+    }
+
+    /// A second source, so the source filter has something to leave out.
+    fn add_other_feed(app: &App) {
+        let store = Store::open(&app.paths.db).unwrap();
+        store
+            .add_feed(
+                "https://other.example/rss",
+                &Fetched {
+                    title: "Other Feed".into(),
+                    site_url: None,
+                    etag: None,
+                    last_modified: None,
+                    articles: vec![article(2, &[Block::new(Kind::Paragraph, LONG)])],
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn search_shows_matches_and_clearing_restores_the_list() {
+        let (ui, app, _dir) = start("search");
+        search_for(&ui, &app, "aggregator");
+        assert!(ui.get_searching());
+        assert_eq!(titles(&app), vec!["Story 1"]);
+
+        // Whitespace is no search: the full list comes back at once.
+        ui.set_search_text("  ".into());
+        app.search_changed();
+        assert!(!ui.get_searching());
+        assert_eq!(titles(&app), vec!["Story 0", "Story 1"]);
+    }
+
+    #[test]
+    fn search_follows_the_unread_tab_and_the_selected_source() {
+        let (ui, app, _dir) = start("search-view");
+        add_other_feed(&app);
+        app.reload_all();
+        search_for(&ui, &app, "aggregator");
+        assert_eq!(titles(&app), vec!["Story 1", "Story 2"]);
+
+        // Reading a match takes it out of the Unread tab only.
+        app.store.set_read(id_of(&app, "Story 1"), true).unwrap();
+        app.reload_all();
+        assert_eq!(titles(&app), vec!["Story 2"]);
+        ui.set_unread_only(false);
+        app.reload_all();
+        assert_eq!(titles(&app), vec!["Story 1", "Story 2"]);
+
+        let blog = app
+            .store
+            .feeds()
+            .unwrap()
+            .into_iter()
+            .find(|f| f.title == "Example Blog")
+            .unwrap();
+        ui.set_selected_feed(blog.id as i32);
+        app.reload_all();
+        assert_eq!(titles(&app), vec!["Story 1"]);
+    }
+
+    #[test]
+    fn slash_and_ctrl_f_focus_the_field_and_it_takes_the_keys() {
+        let (ui, app, _dir) = start("search-keys");
+        press(&ui, "/");
+        assert!(ui.get_search_focused());
+        press(&ui, "a");
+        press(&ui, "/");
+        assert_eq!(ui.get_search_text(), "a/");
+        testing::mock_elapsed_time(Duration::from_millis(200));
+
+        // Escape clears the field and hands the keyboard back to the list.
+        press(&ui, Key::Escape);
+        assert_eq!(ui.get_search_text(), "");
+        assert!(!ui.get_search_focused());
+        assert!(!ui.get_searching());
+
+        chord(&ui, Key::Control, "f");
+        assert!(ui.get_search_focused());
+        press(&ui, "m");
+        assert_eq!(ui.get_search_text(), "m");
+
+        // The field takes the reader's keys too: "/" closes the reader.
+        press(&ui, Key::Escape);
+        app.open_article(row_of(&app, "Story 1"));
+        assert!(ui.get_reader_open());
+        press(&ui, "/");
+        assert!(!ui.get_reader_open());
+        assert!(ui.get_search_focused());
+        press(&ui, "j");
+        assert_eq!(ui.get_search_text(), "j");
+    }
+
+    #[test]
+    fn escape_closes_the_reader_first_and_then_clears_the_search() {
+        let (ui, app, _dir) = start("search-esc");
+        search_for(&ui, &app, "aggregator");
+        app.open_article(row_of(&app, "Story 1"));
+        press(&ui, Key::Escape);
+        assert!(!ui.get_reader_open());
+        assert_eq!(ui.get_search_text(), "aggregator");
+        assert!(ui.get_searching());
+
+        press(&ui, Key::Escape);
+        assert_eq!(ui.get_search_text(), "");
+        assert!(!ui.get_searching());
+        assert_eq!(titles(&app), vec!["Story 0"]);
+    }
+
+    #[test]
+    fn typos_match_once_the_vocabulary_is_cached() {
+        let (ui, app, _dir) = start("search-typo");
+        search_for(&ui, &app, "stroy");
+        assert!(ui.get_searching());
+        assert!(
+            titles(&app).is_empty(),
+            "no typo tolerance before the cache"
+        );
+
+        // The worker's job, done here so the test doesn't wait on a thread.
+        let version = app.store.data_version().unwrap();
+        let words = app.store.search_terms().unwrap();
+        app.terms_ready(version, Ok(search::Terms::new(words)));
+        assert_eq!(titles(&app), vec!["Story 0", "Story 1"]);
+
+        // Opening the database on another connection doesn't stale the cache.
+        let before = app.store.data_version().unwrap();
+        Store::open(&app.paths.db).unwrap().search_terms().unwrap();
+        assert_eq!(app.store.data_version().unwrap(), before);
+    }
+
+    #[test]
+    fn writes_on_this_connection_mark_the_vocabulary_stale() {
+        let (_ui, app, _dir) = start("search-stale");
+        let version = app.store.data_version().unwrap();
+        app.terms_ready(version, Ok(search::Terms::new(Vec::new())));
+        assert_eq!(app.terms_stamp.get(), Some(version));
+
+        let feed = app.store.feeds().unwrap()[0].id as i32;
+        app.remove_feed(feed);
+        assert_eq!(app.terms_stamp.get(), None);
+    }
+
+    #[test]
+    fn a_search_without_matches_empties_the_list() {
+        let (ui, app, _dir) = start("search-none");
+        search_for(&ui, &app, "zebra");
+        assert!(ui.get_searching());
+        assert!(titles(&app).is_empty());
+
+        // Only punctuation has no words to search for.
+        search_for(&ui, &app, "!?");
+        assert!(ui.get_searching());
+        assert!(titles(&app).is_empty());
+    }
+
+    #[test]
+    fn search_field_stays_clear_of_the_header_at_narrow_widths() {
+        let (ui, _app, _dir) = start("search-narrow");
+        for (w, h) in [(720., 560.), (800., 600.), (1240., 820.)] {
+            resize(&ui, w, h);
+            let find = |id: &str| {
+                ElementHandle::find_by_element_id(&ui, id)
+                    .next()
+                    .unwrap_or_else(|| panic!("{id} in the header"))
+            };
+            let left = |e: &ElementHandle| e.absolute_position().x;
+            let right = |e: &ElementHandle| e.absolute_position().x + e.size().width;
+            let title = find("AppWindow::title-column");
+            let field = find("AppWindow::search-box");
+            let tabs = find("AppWindow::header-tabs");
+            assert!(
+                right(&title) <= left(&field) && right(&field) <= left(&tabs),
+                "at {w}px the header's title, search field and tabs overlap"
+            );
+            // Two 36px buttons with 8px gaps follow the tabs, then the window's edge.
+            assert!(
+                right(&tabs) + 88. <= w,
+                "at {w}px the header buttons run off the window"
+            );
+        }
     }
 
     /// Home/End: Apple's TextInput ignores them and moves by line with

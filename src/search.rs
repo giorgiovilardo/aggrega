@@ -117,16 +117,12 @@ fn osa_distance(a: &[char], b: &[char], max: usize) -> Option<usize> {
 
 /// The index vocabulary, folded for matching. Built from
 /// `Store::search_terms` and kept between queries.
-// used by the search UI, next step
-#[allow(dead_code)]
 pub struct Terms {
     /// `(folded chars, original term)`, sorted by the folded form.
     entries: Vec<(Vec<char>, String)>,
 }
 
 impl Terms {
-    // used by the search UI, next step
-    #[allow(dead_code)]
     pub fn new(terms: impl IntoIterator<Item = String>) -> Self {
         let mut entries: Vec<(Vec<char>, String)> = terms
             .into_iter()
@@ -136,8 +132,7 @@ impl Terms {
         Self { entries }
     }
 
-    // used by the search UI, next step
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -167,8 +162,6 @@ pub struct Query {
 }
 
 impl Query {
-    // used by the search UI, next step
-    #[allow(dead_code)]
     pub fn tiers(&self) -> &[String] {
         &self.tiers
     }
@@ -196,8 +189,6 @@ fn folded_prefix<'a>(terms: &'a Terms, folded: &str) -> Vec<&'a str> {
 /// `terms` there is only one tier: exact words, and a prefix for the last one.
 /// With `terms`, the last token also matches the vocabulary words that
 /// `folded_prefix` finds, in every tier.
-// used by the search UI, next step
-#[allow(dead_code)]
 pub fn compile(q: &str, terms: Option<&Terms>) -> Option<Query> {
     let lower = q.to_lowercase();
     let tokens: Vec<&str> = lower

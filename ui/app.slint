@@ -69,6 +69,11 @@ export component AppWindow inherits Window {
     in property <int> zoom-percent: 100;
     // Interface language code ("en", "it"), set from Rust.
     in property <string> language: "en";
+    // The header's search field: its text, whether the list shows matches,
+    // and whether the field has the keyboard.
+    in-out property <string> search-text;
+    in property <bool> searching;
+    out property <bool> search-focused: search-input.has-focus;
 
     // Reader view: the open article and its content blocks.
     in-out property <bool> reader-open: false;
@@ -93,6 +98,8 @@ export component AppWindow inherits Window {
     callback open-article(int);
     callback toggle-read(int);
     callback filter-changed();
+    // The search field was edited (not when Slint itself clears it).
+    callback search-changed();
     callback mark-all-read();
     callback add-feed(string);
     callback remove-feed(int);
@@ -179,6 +186,18 @@ export component AppWindow inherits Window {
         }
     }
 
+    // Ctrl/Cmd+F and / put the search field in focus, taking the reader away
+    // first so the list being searched is in view.
+    function focus-search() {
+        self.hide-reader();
+        search-input.focus();
+    }
+
+    function clear-search() {
+        self.search-text = "";
+        self.search-changed();
+    }
+
     property <string> toast-message;
     property <bool> toast-visible: false;
 
@@ -240,6 +259,13 @@ export component AppWindow inherits Window {
                 settings-dialog.open();
                 return accept;
             }
+            // Keys typed into the field never reach here: the field takes them first.
+            if (!add-dialog.shown && !confirm.shown
+                && ((event.modifiers.control && event.text == "f")
+                    || (event.text == "/" && !event.modifiers.control && !event.modifiers.alt))) {
+                root.focus-search();
+                return accept;
+            }
             if (event.text == Key.F5 || (event.modifiers.control && event.text == "r")) {
                 root.refresh();
                 return accept;
@@ -252,8 +278,11 @@ export component AppWindow inherits Window {
                 if (add-dialog.shown || confirm.shown) {
                     add-dialog.close();
                     confirm.close();
-                } else {
+                } else if (root.reader-open) {
                     root.hide-reader();
+                } else if (root.search-text != "" || root.search-focused) {
+                    keys.focus();
+                    root.clear-search();
                 }
                 return accept;
             }
@@ -368,12 +397,13 @@ export component AppWindow inherits Window {
                                 spacing: 8px;
                                 padding-bottom: 14px;
 
-                                VerticalLayout {
+                                title-column := VerticalLayout {
                                     horizontal-stretch: 1;
                                     alignment: end;
                                     spacing: 6px;
                                     Text {
                                         text: root.today.to-uppercase();
+                                        overflow: elide;
                                         font-family: Fonts.sans-bold;
                                         font-weight: 700;
                                         font-size: 10.5px;
@@ -401,7 +431,84 @@ export component AppWindow inherits Window {
 
                                 VerticalLayout {
                                     alignment: end;
-                                    Tabs {
+                                    search-box := Rectangle {
+                                        width: main.narrow ? 150px : 220px;
+                                        height: 34px;
+                                        border-radius: 4px;
+                                        background: Theme.input;
+                                        border-width: 1px;
+                                        border-color: root.search-focused ? Theme.ink : Theme.rule;
+                                        animate border-color { duration: 160ms; }
+
+                                        HorizontalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 6px;
+                                            spacing: 8px;
+                                            Image {
+                                                source: Icons.search;
+                                                width: 15px;
+                                                height: 15px;
+                                                y: (parent.height - self.height) / 2;
+                                                colorize: root.search-focused ? Theme.accent : Theme.text-faint;
+                                            }
+                                            Rectangle {
+                                                horizontal-stretch: 1;
+                                                Text {
+                                                    x: 0;
+                                                    height: parent.height;
+                                                    vertical-alignment: center;
+                                                    text: @tr("Search");
+                                                    color: Theme.text-faint;
+                                                    font-family: Fonts.serif;
+                                                    font-italic: true;
+                                                    font-size: 14px;
+                                                    visible: search-input.text == "";
+                                                }
+                                                search-flick := Flickable {
+                                                    width: parent.width;
+                                                    height: parent.height;
+                                                    interactive: false;
+                                                    content-width: max(self.width, search-input.preferred-width + 4px);
+
+                                                    search-input := TextInput {
+                                                        width: max(search-flick.width, self.preferred-width + 4px);
+                                                        height: search-flick.height;
+                                                        vertical-alignment: center;
+                                                        single-line: true;
+                                                        font-family: Fonts.serif;
+                                                        font-size: 14px;
+                                                        color: Theme.ink;
+                                                        selection-background-color: Theme.accent-soft;
+                                                        selection-foreground-color: Theme.ink;
+                                                        text <=> root.search-text;
+                                                        edited => { root.search-changed(); }
+                                                        cursor-position-changed(pos) => {
+                                                            if (pos.x + search-flick.content-x < 0px) {
+                                                                search-flick.content-x = -pos.x;
+                                                            } else if (pos.x + search-flick.content-x > search-flick.width - 2px) {
+                                                                search-flick.content-x = -pos.x + search-flick.width - 2px;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if root.search-text != "": IconButton {
+                                                y: (parent.height - self.height) / 2;
+                                                size: 22px;
+                                                icon-size: 12px;
+                                                icon: Icons.x;
+                                                label: @tr("Clear search");
+                                                clicked => {
+                                                    search-input.focus();
+                                                    root.clear-search();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: end;
+                                    header-tabs := Tabs {
                                         segment: main.narrow ? 64px : 76px;
                                         options: [@tr("Unread"), @tr("All")];
                                         index: root.unread-only ? 0 : 1;
@@ -416,6 +523,7 @@ export component AppWindow inherits Window {
                                     IconButton {
                                         icon: Icons.check-all;
                                         label: @tr("Mark all as read");
+                                        enabled: !root.searching;
                                         clicked => { root.mark-all-read(); }
                                     }
                                 }
@@ -458,9 +566,9 @@ export component AppWindow inherits Window {
 
                     if root.has-feeds && root.articles.length == 0: EmptyState {
                         vertical-stretch: 1;
-                        kicker: root.refreshing ? @tr("Stop the presses") : root.unread-only ? @tr("That's the edition") : @tr("Quiet news day");
-                        title: root.refreshing ? @tr("Fetching the latest…") : root.unread-only ? @tr("You're all caught up") : @tr("Nothing here yet");
-                        subtitle: root.refreshing ? @tr("This only takes a moment.") : root.unread-only ? @tr("You've read everything. Time for a coffee.") : @tr("Hit refresh to check your sources for new stories.");
+                        kicker: root.searching ? @tr("Search") : root.refreshing ? @tr("Stop the presses") : root.unread-only ? @tr("That's the edition") : @tr("Quiet news day");
+                        title: root.searching ? @tr("No matches") : root.refreshing ? @tr("Fetching the latest…") : root.unread-only ? @tr("You're all caught up") : @tr("Nothing here yet");
+                        subtitle: root.searching ? (root.unread-only ? @tr("Only unread stories are searched. Switch to All to look further.") : @tr("Try another word, or check the spelling.")) : root.refreshing ? @tr("This only takes a moment.") : root.unread-only ? @tr("You've read everything. Time for a coffee.") : @tr("Hit refresh to check your sources for new stories.");
                     }
 
                     if root.has-feeds && root.articles.length > 0: ListView {
