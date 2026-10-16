@@ -574,3 +574,23 @@ msgstr "Articolo precedente"
 
 msgid "Next story"
 msgstr "Articolo successivo"
+
+msgid "Search"
+msgstr "Cerca"
+
+msgid "Clear search"
+msgstr "Cancella la ricerca"
+
+msgid "No matches"
+msgstr "Nessun risultato"
+
+msgid "Only unread stories are searched. Switch to All to look further."
+msgstr "Vengono cercati solo gli articoli non letti. Passa a Tutti per cercare altrove."
+
+msgid "Try another word, or check the spelling."
+msgstr "Prova un'altra parola o controlla l'ortografia."
+
+msgid "{n} match"
+msgid_plural "{n} matches"
+msgstr[0] "{n} risultato"
+msgstr[1] "{n} risultati"
