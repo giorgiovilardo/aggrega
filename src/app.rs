@@ -19,7 +19,7 @@ use crate::db::{RefreshSummary, SCHEMA_VERSION, Stats, Store};
 use crate::feed::{self, Source};
 use crate::i18n::{self, Lang, tr, trn};
 use crate::opml;
-use crate::reader::{self, Block};
+use crate::reader::{self, Block, Kind};
 use crate::{
     AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, SyncPeer, fetch, pool,
     sync, text, thumbs,
@@ -770,24 +770,24 @@ impl App {
         let rows: Vec<ReaderBlock> = blocks
             .iter()
             .map(|b| {
-                let (kind, text) = match b {
-                    Block::Paragraph(t) => (BlockKind::Paragraph, t),
-                    Block::Heading(t) => (BlockKind::Heading, t),
-                    Block::Quote(t) => (BlockKind::Quote, t),
-                    Block::Bullet(t) => (BlockKind::Bullet, t),
-                    Block::Code(t) => (BlockKind::Code, t),
-                    Block::Image(u) => {
-                        images.push(u.clone());
+                let kind = match b.kind {
+                    Kind::Paragraph => BlockKind::Paragraph,
+                    Kind::Heading => BlockKind::Heading,
+                    Kind::Quote => BlockKind::Quote,
+                    Kind::Bullet => BlockKind::Bullet,
+                    Kind::Code => BlockKind::Code,
+                    Kind::Image => {
+                        images.push(b.text.clone());
                         return ReaderBlock {
                             kind: BlockKind::Image,
-                            image_url: u.as_str().into(),
+                            image_url: b.text.as_str().into(),
                             ..Default::default()
                         };
                     }
                 };
                 ReaderBlock {
                     kind,
-                    text: text.as_str().into(),
+                    text: b.text.as_str().into(),
                     ..Default::default()
                 }
             })
@@ -1641,10 +1641,10 @@ fn subscribe_all(agent: &ureq::Agent, db: &Path, sources: &[Source]) -> Result<I
 
 /// The pictures among `blocks`.
 fn image_urls(blocks: &[Block]) -> impl Iterator<Item = String> + '_ {
-    blocks.iter().filter_map(|b| match b {
-        Block::Image(u) => Some(u.clone()),
-        _ => None,
-    })
+    blocks
+        .iter()
+        .filter(|b| b.kind == Kind::Image)
+        .map(|b| b.text.clone())
 }
 
 /// The site name shown in the reader, e.g. "example.com".
@@ -1700,10 +1700,10 @@ mod tests {
     }
 
     fn full_text() -> Vec<Block> {
-        let mut blocks = vec![Block::Heading("Story 1".into())];
-        blocks.extend((0..12).map(|_| Block::Paragraph(LONG.into())));
-        blocks.push(Block::Quote("A quote".into()));
-        blocks.push(Block::Image("http://127.0.0.1:9/pic.png".into()));
+        let mut blocks = vec![Block::new(Kind::Heading, "Story 1")];
+        blocks.extend((0..12).map(|_| Block::new(Kind::Paragraph, LONG)));
+        blocks.push(Block::new(Kind::Quote, "A quote"));
+        blocks.push(Block::new(Kind::Image, "http://127.0.0.1:9/pic.png"));
         blocks
     }
 
@@ -1726,7 +1726,7 @@ mod tests {
                     etag: None,
                     last_modified: None,
                     articles: vec![
-                        article(0, &[Block::Paragraph("Just a teaser…".into())]),
+                        article(0, &[Block::new(Kind::Paragraph, "Just a teaser…")]),
                         article(1, &full_text()),
                     ],
                 },
@@ -1854,9 +1854,9 @@ mod tests {
         assert_eq!(kinds(&app), vec![BlockKind::Paragraph]);
 
         let page = vec![
-            Block::Paragraph(LONG.into()),
-            Block::Heading("More".into()),
-            Block::Paragraph(LONG.into()),
+            Block::new(Kind::Paragraph, LONG),
+            Block::new(Kind::Heading, "More"),
+            Block::new(Kind::Paragraph, LONG),
         ];
         app.page_ready(id, Ok(page.clone()));
         assert!(!ui.get_reader_loading());
@@ -1898,7 +1898,7 @@ mod tests {
         let teaser_id = ui.get_reader().id as i64;
         app.open_article(row_of(&app, "Story 1"));
 
-        app.page_ready(teaser_id, Ok(vec![Block::Paragraph(LONG.into())]));
+        app.page_ready(teaser_id, Ok(vec![Block::new(Kind::Paragraph, LONG)]));
         app.picture_ready(teaser_id, "http://127.0.0.1:9/pic.png", None);
         assert_eq!(ui.get_reader().title, "Story 1");
         assert_eq!(app.reader_blocks.row_count(), 14, "Story 1 is untouched");
@@ -2079,7 +2079,7 @@ mod tests {
         let next = app.prefetch_id.get().expect("next story prefetched");
         assert!(app.pages_pending.borrow().contains(&next));
         let mut page = full_text();
-        page.push(Block::Image("http://127.0.0.1:9/a.png".into()));
+        page.push(Block::new(Kind::Image, "http://127.0.0.1:9/a.png"));
         let blocks = page.len();
         app.page_ready(next, Ok(page));
         assert!(!read_in_db(&app, next), "prefetching doesn't read it");
