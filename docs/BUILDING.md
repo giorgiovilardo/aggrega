@@ -1,6 +1,6 @@
 # Building and running Aggrega
 
-Arch Linux is the first supported target, and macOS builds are produced for every release (see [section 6](#6-macos)). Other platforms will follow in later iterations. The code is portable, so what's missing for them is mostly packaging.
+Arch Linux is the first supported target, and macOS and Windows builds are produced for every release (see [section 6](#6-macos) and [section 7](#7-windows)). Other platforms will follow in later iterations. The code is portable, so what's missing for them is mostly packaging.
 
 ## 1. Prerequisites (Arch Linux)
 
@@ -115,7 +115,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar (under the logo) and the About tab in Settings show it. Both jobs fail if `aggrega --version` doesn't print the tag's version. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file, the icon, the README and the licenses (`LICENSE`, plus `OFL.txt` for the bundled fonts). The same run also builds the macOS app (see below). Local builds show the version from `Cargo.toml`.
+The workflow builds inside an `archlinux` container and uses the tag as the app version: `v0.3.0` becomes `0.3.0`, and the sidebar (under the logo) and the About tab in Settings show it. Every job fails if `aggrega --version` doesn't print the tag's version. When the run finishes, download `aggrega-<version>-x86_64.tar.gz` from the run's **Artifacts** section. It contains the binary, the `.desktop` file, the icon, the README and the licenses (`LICENSE`, plus `OFL.txt` for the bundled fonts). The same run also builds the macOS app and the Windows zip (see below). Local builds show the version from `Cargo.toml`.
 
 ## 6. macOS
 
@@ -142,12 +142,31 @@ open dist/Aggrega.app
 
 `packaging/macos/bundle.sh` builds the `aarch64-apple-darwin` target, writes `Info.plist` from `packaging/macos/Info.plist`, renders `aggrega.icns` from `assets/aggrega.svg`, ad-hoc signs the bundle and packs it, with an `/Applications` link, into a compressed disk image with `hdiutil`. For day-to-day development, plain `cargo run` works on macOS too; no extra native libraries are needed.
 
-## 7. Data and reset
+## 7. Windows
 
-| What | Linux | macOS |
-|---|---|---|
-| Database | `${XDG_DATA_HOME:-~/.local/share}/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` |
-| Thumbnails | `${XDG_CACHE_HOME:-~/.cache}/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` |
+Every version tag also produces `aggrega-<version>-windows-x86_64.zip`, in the same run's **Artifacts** section, for 64-bit Windows 10 and 11. It holds `aggrega.exe`, the README and the licenses. There's no installer: unzip it wherever you like (for example `%LOCALAPPDATA%\Programs\Aggrega`) and run `aggrega.exe`, or pin it to Start or the taskbar. Your data lives elsewhere (see [section 8](#8-data-and-reset)), so replacing the folder with a newer version keeps it.
+
+### First launch (SmartScreen)
+
+The executable isn't code-signed, so Microsoft Defender SmartScreen may say it "prevented an unrecognized app from starting". Click **More info → Run anyway**. If Windows marked the zip as downloaded from the internet, you can also clear that before extracting: right-click the zip → **Properties** → tick **Unblock**.
+
+### Building it yourself
+
+Install [Rust](https://rustup.rs) with the default MSVC toolchain (`x86_64-pc-windows-msvc`); `rustup-init` offers to install the Visual Studio Build Tools ("Desktop development with C++"), which provide the linker and the Windows SDK. Then, from a terminal in the repository:
+
+```powershell
+cargo run                # dev build, with a console window for log output
+cargo build --release    # target\release\aggrega.exe, no console window
+```
+
+No other native libraries are needed: SQLite is compiled in, and the window uses OpenGL through the GPU driver. `build.rs` embeds `assets/aggrega.ico` (and the version from `Cargo.toml`) into the executable via `winresource`, so Explorer and the taskbar show the app icon. Release builds use the GUI subsystem (`#![windows_subsystem = "windows"]` in `src/main.rs`), so no console window opens next to the app; debug builds keep it. The release workflow's `build-windows` job runs the same `cargo build --release` on `windows-latest` and zips the result.
+
+## 8. Data and reset
+
+| What | Linux | macOS | Windows |
+|---|---|---|---|
+| Database | `${XDG_DATA_HOME:-~/.local/share}/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` | `%APPDATA%\aggrega\data\aggrega.db` |
+| Thumbnails | `${XDG_CACHE_HOME:-~/.cache}/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` | `%LOCALAPPDATA%\aggrega\cache\thumbs\` |
 
 On Linux, both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`.
 
@@ -157,7 +176,7 @@ To try Aggrega with a throwaway profile without touching your real data, point `
 AGGREGA_HOME=/tmp/agg cargo run
 ```
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 **The window opens under XWayland instead of native Wayland (or the reverse).**
 Aggrega uses Wayland whenever `WAYLAND_DISPLAY` is set. To force X11, run:
@@ -176,13 +195,13 @@ Install a basic font set, for example `sudo pacman -S noto-fonts noto-fonts-emoj
 Its last refresh failed. The site might be down, or the feed might have moved. The error is stored in the `last_error` column of the `feeds` table. Aggrega retries automatically on the next refresh.
 
 **Clicking an article does nothing.**
-Aggrega opens links with `xdg-open`. Check that a default browser is set: `xdg-settings get default-web-browser`.
+Aggrega opens links with the system's default browser: `xdg-open` on Linux (check that one is set with `xdg-settings get default-web-browser`), `open` on macOS, and the shell's default handler on Windows (*Settings → Apps → Default apps*).
 
 **Import… / Export… does nothing on Linux.**
 The file dialogs go through the XDG desktop portal over D-Bus. Install `xdg-desktop-portal` plus the backend for your desktop (`xdg-desktop-portal-gtk`, `-kde`, `-gnome`…), or `zenity`, which Aggrega falls back to when no portal answers.
 
 **Settings → Sync doesn't list the other computer.**
-Both need the Sync tab open, on the same network. Discovery uses UDP broadcast on port 47811, which guest and hotel Wi-Fi often block between devices; type the address shown on the other computer's Sync tab instead. Pulling uses TCP port 47812, so a firewall must let it in on the computer you pull *from*, e.g. `sudo ufw allow 47811/udp && sudo ufw allow 47812/tcp`. On macOS, allow Aggrega when it asks to find devices on your local network (or later under *System Settings → Privacy & Security → Local Network*) and to accept incoming connections.
+Both need the Sync tab open, on the same network. Discovery uses UDP broadcast on port 47811, which guest and hotel Wi-Fi often block between devices; type the address shown on the other computer's Sync tab instead. Pulling uses TCP port 47812, so a firewall must let it in on the computer you pull *from*, e.g. `sudo ufw allow 47811/udp && sudo ufw allow 47812/tcp`. On Windows, allow Aggrega through Windows Defender Firewall when it asks (on private networks). On macOS, allow Aggrega when it asks to find devices on your local network (or later under *System Settings → Privacy & Security → Local Network*) and to accept incoming connections.
 
 **`error: rustc 1.xx is not supported`.**
 Update the toolchain with `rustup update stable`. Aggrega uses Rust 2024 edition features and needs Rust 1.88 or newer.

@@ -399,7 +399,9 @@ pub fn device_name() -> String {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok());
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    let name = std::env::var("COMPUTERNAME").ok();
+    #[cfg(not(any(target_os = "macos", windows)))]
     let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
     name.map(|n| one_line(n.trim()))
         .filter(|n| !n.is_empty())

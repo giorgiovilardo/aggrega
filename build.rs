@@ -9,4 +9,12 @@ fn main() {
         .with_bundled_translations("translations")
         .with_default_translation_context(slint_build::DefaultTranslationContext::None);
     slint_build::compile_with_config("ui/app.slint", config).expect("failed to compile Slint UI");
+
+    // Explorer and the taskbar take the .exe's icon from its resources. Only
+    // native Windows builds embed it (the dependency is Windows-only).
+    #[cfg(windows)]
+    winresource::WindowsResource::new()
+        .set_icon("assets/aggrega.ico")
+        .compile()
+        .expect("failed to embed the Windows icon");
 }

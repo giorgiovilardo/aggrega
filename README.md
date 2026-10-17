@@ -15,7 +15,7 @@
 - **Unlimited sources.** RSS 0.9x/1.0/2.0, Atom and JSON Feed are all supported.
 - **Smart "Add source".** Paste a feed URL, or just a website such as `theverge.com`. Aggrega finds the feed from the page's `<link rel="alternate">` tags or from common paths like `/feed` and `/rss.xml`. YouTube channels work too (paste `youtube.com/@name`), and new videos show up with their thumbnail and description.
 - **OPML import and export.** Bring your subscriptions over from Feedly, Inoreader, NetNewsWire, Miniflux or any other reader: **Settings → Import & export**, or **Import from OPML** on the welcome screen. Folders are flattened, sources you already follow are skipped, and Aggrega tells you how many were added, skipped or couldn't be reached. Export writes every source to a standard OPML 2.0 file.
-- **Sync between computers.** Moving to another machine? Open **Settings → Sync** on both: each lists the other copies of Aggrega on the same network (or type the other computer's address, shown on its Sync tab). Pull from one and, after you confirm, its sources, articles and read state replace everything on this computer; your theme, language and refresh interval stay. It works between macOS and Linux. Nothing listens or announces itself unless the Sync tab is on screen, and the transfer is not encrypted, so use it on networks you trust.
+- **Sync between computers.** Moving to another machine? Open **Settings → Sync** on both: each lists the other copies of Aggrega on the same network (or type the other computer's address, shown on its Sync tab). Pull from one and, after you confirm, its sources, articles and read state replace everything on this computer; your theme, language and refresh interval stay. It works between Linux, macOS and Windows. Nothing listens or announces itself unless the Sync tab is on screen, and the transfer is not encrypted, so use it on networks you trust.
 - **Newest posts first.** The list merges every source into one feed sorted by date. You can also focus on a single source from the sidebar.
 - **Search.** The field in the header finds stories by title, summary and text, within the source and tab you are looking at. It forgives typos, and it searches as you type.
 - **Works offline.** Everything you've downloaded, including stories and thumbnails, stays readable without a connection. When no source can be reached, Aggrega says it's offline instead of flagging your sources as broken, and it retries the next time you refresh.
@@ -80,12 +80,16 @@ If you only open TCP 47812, you can still sync by typing the other computer's ad
 
 Each release run builds `Aggrega.app` for Apple silicon Macs (M series, macOS 11+), published as the disk image `aggrega-<version>-macos-arm64.dmg` in the run's artifacts. Intel Macs aren't supported. The app isn't notarized, so the first launch is blocked by Gatekeeper: click **Open Anyway** under *System Settings → Privacy & Security*, or run `xattr -dr com.apple.quarantine /Applications/Aggrega.app`. See [docs/BUILDING.md](docs/BUILDING.md#6-macos) to build it yourself.
 
+## Windows
+
+Each release run also builds `aggrega-<version>-windows-x86_64.zip` for 64-bit Windows 10 and 11. Unzip it anywhere and run `aggrega.exe`; there's no installer. The executable isn't signed, so SmartScreen may warn on first launch: click **More info → Run anyway**. See [docs/BUILDING.md](docs/BUILDING.md#7-windows) to build it yourself.
+
 ## Where is my data?
 
-| What | Linux | macOS |
-|---|---|---|
-| Subscriptions, articles, read state, settings | `~/.local/share/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` |
-| Thumbnail cache (safe to delete) | `~/.cache/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` |
+| What | Linux | macOS | Windows |
+|---|---|---|---|
+| Subscriptions, articles, read state, settings | `~/.local/share/aggrega/aggrega.db` | `~/Library/Application Support/aggrega/aggrega.db` | `%APPDATA%\aggrega\data\aggrega.db` |
+| Thumbnail cache (safe to delete) | `~/.cache/aggrega/thumbs/` | `~/Library/Caches/aggrega/thumbs/` | `%LOCALAPPDATA%\aggrega\cache\thumbs\` |
 
 On Linux, both paths honour `XDG_DATA_HOME` / `XDG_CACHE_HOME`. Setting `AGGREGA_HOME` keeps everything in that one directory instead (`aggrega.db` and `thumbs/`), which is handy for a separate or throwaway profile. **Settings → About** shows the paths in use, with buttons to open each folder. To start fresh, quit Aggrega and delete the two directories. Read articles older than 90 days are pruned automatically.
 
@@ -128,6 +132,7 @@ aggrega/
 │   └── icons/          # SVG icons
 ├── assets/
 │   ├── aggrega.svg     # app icon
+│   ├── aggrega.ico     # Windows icon, embedded in aggrega.exe by build.rs
 │   └── fonts/          # bundled OFL fonts (see FONTS.md)
 ├── translations/       # .po catalogs (it); English is the source text
 ├── packaging/          # .desktop file, Arch PKGBUILD, macOS .app bundling

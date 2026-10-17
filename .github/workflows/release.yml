@@ -1,7 +1,7 @@
-# Builds an Arch Linux binary and a macOS app whenever a version tag (v0.0.1, v1.2.3, ...) is pushed.
+# Builds an Arch Linux binary, a macOS app and a Windows zip whenever a version tag (v0.0.1, v1.2.3, ...) is pushed.
 # The tag becomes the app version: Cargo.toml is rewritten before the build, so
 # `CARGO_PKG_VERSION` (shown in the sidebar and the About tab) matches the tag;
-# both jobs check `aggrega --version` against it.
+# every job checks `aggrega --version` against it.
 name: Release build
 
 on:
@@ -113,4 +113,52 @@ jobs:
         with:
           archive: false
           path: dist/aggrega-${{ steps.version.outputs.version }}-macos-arm64.dmg
+          if-no-files-found: error
+
+  build-windows:
+    # x86_64 aggrega.exe (MSVC toolchain, icon embedded by build.rs) in a zip.
+    # Unsigned, so SmartScreen warns on first launch (see docs/BUILDING.md).
+    runs-on: windows-latest
+    defaults:
+      run:
+        # Git Bash, so the steps read like the other jobs'.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Set version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # GNU sed: only the [package] version line (the first `version =`).
+          sed -i "0,/^version = \".*\"/s//version = \"$version\"/" Cargo.toml
+          grep -m1 '^version' Cargo.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        # Not --locked, for the same reason as the Linux build.
+        run: cargo build --release
+
+      - name: Check version
+        # A GUI-subsystem exe has no console, but still writes to a redirected stdout.
+        run: test "$(target/release/aggrega.exe --version | tr -d '\r')" = "aggrega ${{ steps.version.outputs.version }}"
+
+      - name: Package
+        id: package
+        run: |
+          name="aggrega-${{ steps.version.outputs.version }}-windows-x86_64"
+          mkdir -p "dist/$name"
+          cp target/release/aggrega.exe README.md LICENSE assets/fonts/OFL.txt "dist/$name/"
+          (cd dist && 7z a -tzip "$name.zip" "$name")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          path: dist/${{ steps.package.outputs.name }}.zip
           if-no-files-found: error

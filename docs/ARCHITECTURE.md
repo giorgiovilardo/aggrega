@@ -102,7 +102,7 @@ To change the schema, add an `if version < 4 { … PRAGMA user_version = 4; }` b
 - **Small model updates.** Marking an article read changes one row with `set_row_data`. The sidebar model is diffed with `sync_model`, so only changed rows are touched.
 - **No idle animation cost.** `animation-tick()` is only evaluated while a refresh is running, because it sits behind a `refreshing ? … : …` condition. When nothing changes, Slint doesn't redraw and CPU use is zero.
 - **Thumbnail memory is bounded.** Decoded thumbnails are 264×184 RGB (about 145 KB each), cached only for rows in the current list, and dropped on reload. The disk cache stores small JPEGs. A `.none` marker remembers URLs that failed, so they aren't retried every launch.
-- **Lean dependency set.** Slint uses only the winit backend and the femtovg OpenGL renderer; the Qt backend is off. Aggrega uses `ureq` instead of `reqwest`/Tokio, and `image` is built with just the jpeg, png, gif and webp decoders. The OPML file dialogs come from `rfd` with only its `xdg-portal` backend: on Linux it talks to the desktop portal through `libdbus`, loaded at run time (falling back to `zenity`), so there's no GTK and no async runtime.
+- **Lean dependency set.** Slint uses only the winit backend and the femtovg OpenGL renderer; the Qt backend is off. Aggrega uses `ureq` instead of `reqwest`/Tokio, and `image` is built with just the jpeg, png, gif and webp decoders. The OPML file dialogs come from `rfd` with only its `xdg-portal` backend: on Linux it talks to the desktop portal through `libdbus`, loaded at run time (falling back to `zenity`), so there's no GTK and no async runtime. On Windows, `winresource` is the only extra (build-time) dependency, to embed the icon in the `.exe`.
 
 ## Design and theming
 

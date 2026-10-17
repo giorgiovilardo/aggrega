@@ -1,14 +1,15 @@
 ---
 name: release
-description: Cut a new Aggrega release by tagging vX.Y.Z, watching the Release build workflow and fetching the Arch Linux tarball and macOS app. Use when asked to release, tag, ship or publish a new version.
+description: Cut a new Aggrega release by tagging vX.Y.Z, watching the Release build workflow and fetching the Arch Linux tarball, macOS app and Windows zip. Use when asked to release, tag, ship or publish a new version.
 ---
 
 # Release Aggrega
 
-Pushing a tag matching `v[0-9]+.[0-9]+.[0-9]+*` triggers `.github/workflows/release.yml`. Both of its jobs rewrite the `[package]` version in `Cargo.toml` from the tag (that's what the sidebar shows), and each uploads a workflow **artifact**:
+Pushing a tag matching `v[0-9]+.[0-9]+.[0-9]+*` triggers `.github/workflows/release.yml`. Each of its jobs rewrites the `[package]` version in `Cargo.toml` from the tag (that's what the sidebar shows), and each uploads a workflow **artifact**:
 
 - `build-arch` builds in an `archlinux` container and uploads `aggrega-<version>-x86_64.tar.gz`.
 - `build-macos` runs `packaging/macos/bundle.sh` on `macos-latest` and uploads `aggrega-<version>-macos-arm64.dmg` (an Apple silicon only, ad-hoc signed `Aggrega.app` in a disk image).
+- `build-windows` builds on `windows-latest` (MSVC) and uploads `aggrega-<version>-windows-x86_64.zip` (an unsigned `aggrega.exe` with the README and licenses).
 
 It does not create a GitHub Release.
 
@@ -44,4 +45,4 @@ gh run watch <run-id> --exit-status
 gh run download <run-id> --dir <scratch dir>
 ```
 
-Report the result. On success, give the run URL and both artifact names. The jobs are independent, so one platform can fail while the other succeeds. On failure, show the failing step's log (`gh run view <run-id> --log-failed`). Don't delete or move the tag without asking the user.
+Report the result. On success, give the run URL and the three artifact names. The jobs are independent, so one platform can fail while the others succeed. On failure, show the failing step's log (`gh run view <run-id> --log-failed`). Don't delete or move the tag without asking the user.
