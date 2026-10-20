@@ -48,7 +48,7 @@ Dependencies point one way: `html` and `text` are leaves, `reader` and `feed` bu
 ## Threading model
 
 - **Slint objects stay on the UI thread.** `App` lives in a `thread_local!`. A worker never touches the UI directly. It posts a closure with `slint::invoke_from_event_loop`, and that closure calls `with_app(|app| …)` on the UI thread.
-- **Only `Send` data crosses threads:** plain Rust structs, `String`s, and `SharedPixelBuffer`s. Thumbnails are decoded and resized on workers, so the UI thread only wraps the finished pixel buffer in a `slint::Image`.
+- **Only `Send` data crosses threads:** plain Rust structs, `String`s, `anyhow::Error`s and `SharedPixelBuffer`s. Thumbnails are decoded and resized on workers, so the UI thread only wraps the finished pixel buffer in a `slint::Image`.
 - **SQLite:** the UI thread keeps one connection for reads and small writes, such as marking an article read. Workers open their own connection. WAL mode plus a 5 s busy timeout let reads and writes run concurrently. A refresh writes all results in a single transaction.
 - **No async runtime.** Blocking I/O on a handful of threads is simpler and lighter than pulling in Tokio for a desktop app that fetches a few dozen URLs at a time.
 
