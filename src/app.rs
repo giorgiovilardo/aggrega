@@ -16,10 +16,9 @@ use slint::{
 };
 
 use crate::db::{Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
-use crate::feed::{self, Source};
+use crate::feed;
 use crate::i18n::{self, Lang, tr, trn};
-use crate::opml;
-use crate::ops::{AddedSource, Core};
+use crate::ops::{self, AddedSource, Core, ImportSummary};
 use crate::profile::Paths;
 use crate::reader::{self, Block, Kind};
 use crate::search;
@@ -1196,28 +1195,18 @@ impl App {
     /// Subscribes, in the background, to every source in the OPML file at
     /// `path` that isn't followed yet.
     fn import_file(&self, path: &Path) {
-        let sources = match std::fs::read(path)
+        let text = match std::fs::read(path)
             .with_context(|| format!("couldn't read {}", path.display()))
-            .and_then(|bytes| opml::parse(&String::from_utf8_lossy(&bytes)))
         {
-            Ok(s) => s,
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(e) => return self.report(tr!("Couldn't import"), e),
         };
-        let known: HashSet<String> = match self.store.sources() {
-            Ok(s) => s.into_iter().map(|s| s.xml_url).collect(),
+        let plan = match ops::plan_import(&self.store, &text) {
+            Ok(p) => p,
             Err(e) => return self.report(tr!("Couldn't import"), e),
         };
-        let total = sources.len();
-        let fresh: Vec<Source> = sources
-            .into_iter()
-            .filter(|s| {
-                let url = fetch::normalize_url(&s.xml_url).unwrap_or_else(|_| s.xml_url.clone());
-                !known.contains(&url)
-            })
-            .collect();
-        let skipped = total - fresh.len();
-        if fresh.is_empty() {
-            return self.toast(match total {
+        if plan.fresh.is_empty() {
+            return self.toast(match plan.total {
                 0 => tr!("No sources found in that file"),
                 n => trn!(
                     n,
@@ -1229,29 +1218,23 @@ impl App {
 
         self.ui().set_importing(true);
         self.toast(trn!(
-            fresh.len(),
+            plan.fresh.len(),
             "Importing {n} source…",
             "Importing {n} sources…"
         ));
-        let agent = self.core.agent().clone();
-        let db_path = self.core.paths.db.clone();
+        let core = self.core.clone();
         std::thread::spawn(move || {
-            let summary = subscribe_all(&agent, &db_path, &fresh)
-                .map(|s| ImportSummary {
-                    skipped: s.skipped + skipped,
-                    ..s
-                })
-                .map_err(|e| format!("{e:#}"));
+            let summary = core.import(plan);
             let _ = slint::invoke_from_event_loop(move || with_app(|app| app.import_done(summary)));
         });
     }
 
-    fn import_done(&self, summary: Result<ImportSummary, String>) {
+    fn import_done(&self, summary: Result<ImportSummary>) {
         self.ui().set_importing(false);
         self.reload_all();
         match summary {
-            Ok(s) => self.toast(s.message()),
-            Err(e) => self.toast(tr!("Import failed: {}", e)),
+            Ok(s) => self.toast(import_message(&s)),
+            Err(e) => self.toast(tr!("Import failed: {}", format!("{e:#}"))),
         }
     }
 
@@ -1281,11 +1264,9 @@ impl App {
 
     /// Writes every source to `path` as OPML; returns how many.
     fn export_to(&self, path: &Path) -> Result<usize> {
-        let sources = self.store.sources()?;
-        let created = chrono::Utc::now().to_rfc2822();
-        std::fs::write(path, opml::write(&sources, &created))
-            .with_context(|| format!("couldn't write {}", path.display()))?;
-        Ok(sources.len())
+        let (doc, count) = ops::export_opml(&self.store)?;
+        std::fs::write(path, doc).with_context(|| format!("couldn't write {}", path.display()))?;
+        Ok(count)
     }
 
     // ---- sync ----------------------------------------------------------------
@@ -1575,45 +1556,27 @@ impl App {
     }
 }
 
-/// What an OPML import did, for the toast.
-#[derive(Debug, Default, PartialEq)]
-struct ImportSummary {
-    added: usize,
-    /// Already followed, or leading to a feed that is.
-    skipped: usize,
-    /// Answered with an error, or not a feed.
-    failed: usize,
-    /// Couldn't be reached at all.
-    unreachable: usize,
-}
-
-impl ImportSummary {
-    fn message(&self) -> String {
-        if self.added == 0 && self.failed == 0 && self.unreachable > 0 {
-            return tr!("You're offline  ·  nothing was imported");
-        }
-        let mut parts = vec![trn!(
-            self.added,
-            "Imported {n} source",
-            "Imported {n} sources"
-        )];
-        if self.skipped > 0 {
-            parts.push(trn!(
-                self.skipped,
-                "{n} already followed",
-                "{n} already followed"
-            ));
-        }
-        let failed = self.failed + self.unreachable;
-        if failed > 0 {
-            parts.push(trn!(
-                failed,
-                "{n} couldn't be added",
-                "{n} couldn't be added"
-            ));
-        }
-        parts.join("  ·  ")
+fn import_message(s: &ImportSummary) -> String {
+    if s.added == 0 && s.failed == 0 && s.unreachable > 0 {
+        return tr!("You're offline  ·  nothing was imported");
     }
+    let mut parts = vec![trn!(s.added, "Imported {n} source", "Imported {n} sources")];
+    if s.skipped > 0 {
+        parts.push(trn!(
+            s.skipped,
+            "{n} already followed",
+            "{n} already followed"
+        ));
+    }
+    let failed = s.failed + s.unreachable;
+    if failed > 0 {
+        parts.push(trn!(
+            failed,
+            "{n} couldn't be added",
+            "{n} couldn't be added"
+        ));
+    }
+    parts.join("  ·  ")
 }
 
 fn minutes(n: i64) -> Duration {
@@ -1673,29 +1636,6 @@ fn capitalize(s: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Subscribes to `sources` in parallel (with feed discovery, like the Add
-/// dialog), then stores each one that works, with its first articles.
-fn subscribe_all(agent: &ureq::Agent, db: &Path, sources: &[Source]) -> Result<ImportSummary> {
-    let results = pool::par_map(sources, 8, |s| fetch::subscribe(agent, &s.xml_url));
-    let store = Store::open(db)?;
-    // Several entries can lead to one feed, and one may have been added meanwhile.
-    let mut known: HashSet<String> = store.sources()?.into_iter().map(|s| s.xml_url).collect();
-    let mut summary = ImportSummary::default();
-    for result in results {
-        match result {
-            Ok(sub) if known.contains(&sub.url) => summary.skipped += 1,
-            Ok(sub) => {
-                store.add_feed(&sub.url, &sub.fetched)?;
-                known.insert(sub.url);
-                summary.added += 1;
-            }
-            Err(e) if feed::is_unreachable(&e) => summary.unreachable += 1,
-            Err(_) => summary.failed += 1,
-        }
-    }
-    Ok(summary)
-}
-
 /// The pictures among `blocks`.
 fn image_urls(blocks: &[Block]) -> impl Iterator<Item = String> + '_ {
     blocks
@@ -1736,7 +1676,8 @@ mod tests {
     //! own backend and `APP`.
 
     use super::*;
-    use crate::feed::{Fetched, NewArticle};
+    use crate::feed::{Fetched, NewArticle, Source};
+    use crate::opml;
     use crate::setup;
     use i_slint_backend_testing::{self as testing, AccessibleRole, ElementHandle};
     use slint::platform::{Key, WindowEvent};
@@ -2588,7 +2529,12 @@ mod tests {
             xml_url: "http://127.0.0.1:9/feed".into(),
             html_url: None,
         };
-        let s = subscribe_all(app.core.agent(), &app.core.paths.db, &[dead]).unwrap();
+        let plan = ops::ImportPlan {
+            fresh: vec![dead],
+            skipped: 0,
+            total: 1,
+        };
+        let s = app.core.import(plan).unwrap();
         assert_eq!((s.added, s.skipped, s.failed + s.unreachable), (0, 0, 1));
         assert_eq!(app.store.sources().unwrap().len(), 1, "nothing stored");
     }
@@ -2596,13 +2542,12 @@ mod tests {
     #[test]
     fn import_summaries() {
         let s = |added, skipped, failed, unreachable| {
-            ImportSummary {
+            import_message(&ImportSummary {
                 added,
                 skipped,
                 failed,
                 unreachable,
-            }
-            .message()
+            })
         };
         assert_eq!(s(1, 0, 0, 0), "Imported 1 source");
         assert_eq!(
