@@ -5,7 +5,7 @@ description: Run Aggrega's pre-push checks (rustfmt, clippy with warnings as err
 
 # Precheck
 
-CI (`.github/workflows/ci.yml`) only runs `cargo test --locked`, so formatting and clippy problems are not caught remotely. Run all three locally, in this order, from the repo root:
+CI (`.github/workflows/ci.yml`) runs the same checks in two jobs, `test` and `lint`, so anything that fails here fails the PR too. Run all three locally first, in this order, from the repo root:
 
 ```bash
 cargo fmt --check
