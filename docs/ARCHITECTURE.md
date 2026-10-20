@@ -25,7 +25,7 @@ Aggrega is a single native binary with no runtime services. The UI is declared i
 | `src/main.rs` | Creates the window, wires every Slint callback to an `App` method, and runs the event loop |
 | `src/app.rs` | `App`, the UI-thread state (models, thumbnail cache, refresh and reader state), every action the UI triggers, and the background work those actions start. Also holds the headless UI tests |
 | `src/profile.rs` | `Paths`: where a profile's database and thumbnail cache live (platform directories, or `AGGREGA_HOME`) |
-| `src/ops.rs` | `Core`: the UI-independent handle on a profile (its `Paths`, the shared HTTP agent, and `store()` to open the database). Blocking only, no UI, no `tr!` |
+| `src/ops.rs` | `Core`: the UI-independent handle on a profile (its `Paths`, the shared HTTP agent, and `store()` to open the database), and the operations the workers run: `refresh`, `add_source`, `import` (after `plan_import` on the UI thread), `export_opml`, `full_text` and `reader_content`. Blocking only, no UI, no `tr!`. Each returns plain data or an `anyhow::Error`; `App` turns them into toasts |
 | `src/fetch.rs` | HTTP only, via `ureq` (blocking, rustls, gzip): conditional feed fetches, subscribing (with feed discovery), article pages and images |
 | `src/feed.rs` | Feeds as plain data (`FeedJob`, `Fetched`, `NewArticle`, `Source`, `Subscription`), plus everything done offline with a download: parsing with `feed-rs`, picking each entry's thumbnail, and finding feed links in an HTML page |
 | `src/html.rs` | The one HTML tokenizer (forgiving tag soup, never fails) and helpers on top of it: attributes, element extents, tags by name, and HTML → plain text |
