@@ -598,13 +598,9 @@ impl App {
         };
         self.background.set(background);
         self.set_refreshing(true);
-        let agent = self.core.agent().clone();
-        let db_path = self.core.paths.db.clone();
+        let core = self.core.clone();
         std::thread::spawn(move || {
-            let results = fetch::fetch_all(&agent, &jobs);
-            let summary = Store::open(&db_path)
-                .and_then(|s| s.apply_refresh(results))
-                .map_err(|e| format!("{e:#}"));
+            let summary = core.refresh(&jobs);
             let _ =
                 slint::invoke_from_event_loop(move || with_app(|app| app.refresh_done(summary)));
         });
@@ -616,7 +612,7 @@ impl App {
         self.update_status();
     }
 
-    fn refresh_done(&self, summary: Result<RefreshSummary, String>) {
+    fn refresh_done(&self, summary: Result<RefreshSummary>) {
         let offline = matches!(&summary, Ok(s) if s.offline());
         self.offline.set(offline);
         // Saved stories stay available offline; just don't pretend we updated.
@@ -654,7 +650,7 @@ impl App {
                 }
                 self.toast(msg);
             }
-            Err(e) => self.toast(tr!("Refresh failed: {}", e)),
+            Err(e) => self.toast(tr!("Refresh failed: {}", format!("{e:#}"))),
         }
     }
 
