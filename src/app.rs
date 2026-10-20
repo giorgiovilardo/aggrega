@@ -5,7 +5,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -19,6 +19,8 @@ use crate::db::{Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, S
 use crate::feed::{self, Source};
 use crate::i18n::{self, Lang, tr, trn};
 use crate::opml;
+use crate::ops::Core;
+use crate::profile::Paths;
 use crate::reader::{self, Block, Kind};
 use crate::search;
 use crate::{
@@ -108,48 +110,10 @@ fn display_path(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-pub struct Paths {
-    pub db: PathBuf,
-    pub thumbs: PathBuf,
-}
-
-impl Paths {
-    /// `$AGGREGA_HOME` if set (database and thumbnails in one directory, for
-    /// throwaway profiles), otherwise the platform's data and cache directories.
-    pub fn new() -> Result<Self> {
-        // Empty counts as unset, so `AGGREGA_HOME= aggrega` doesn't write into
-        // the working directory.
-        if let Some(home) = std::env::var_os("AGGREGA_HOME").filter(|v| !v.is_empty()) {
-            let home = std::path::absolute(home)?;
-            eprintln!("aggrega: using profile at {}", home.display());
-            return Self::in_dir(&home);
-        }
-        let dirs =
-            directories::ProjectDirs::from("", "", "aggrega").context("no home directory found")?;
-        Self::create(dirs.data_dir(), dirs.cache_dir().join("thumbs"))
-    }
-
-    /// A self-contained profile: `aggrega.db` and `thumbs/` inside `dir`.
-    fn in_dir(dir: &Path) -> Result<Self> {
-        Self::create(dir, dir.join("thumbs"))
-    }
-
-    fn create(data: &Path, thumbs: PathBuf) -> Result<Self> {
-        for dir in [data, &thumbs] {
-            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        }
-        Ok(Self {
-            db: data.join("aggrega.db"),
-            thumbs,
-        })
-    }
-}
-
 pub struct App {
     ui: slint::Weak<AppWindow>,
     store: Store,
-    paths: Paths,
-    agent: ureq::Agent,
+    core: Core,
     articles: Rc<VecModel<ArticleItem>>,
     /// Publish timestamps of `articles`, row for row (for relative time labels).
     article_ts: RefCell<Vec<i64>>,
@@ -252,8 +216,7 @@ impl App {
         let app = Rc::new(App {
             ui: ui.as_weak(),
             store,
-            paths,
-            agent: fetch::agent(),
+            core: Core::new(paths),
             articles,
             article_ts: RefCell::default(),
             feeds,
@@ -456,7 +419,7 @@ impl App {
         };
         self.terms_loading.set(true);
         self.terms_dirty.set(false);
-        let db_path = self.paths.db.clone();
+        let db_path = self.core.paths.db.clone();
         std::thread::spawn(move || {
             let terms = Store::open(&db_path)
                 .and_then(|s| s.search_terms())
@@ -560,8 +523,8 @@ impl App {
             return;
         }
         self.thumb_pending.borrow_mut().extend(urls.iter().cloned());
-        let agent = self.agent.clone();
-        let dir = self.paths.thumbs.clone();
+        let agent = self.core.agent().clone();
+        let dir = self.core.paths.thumbs.clone();
         let urls: Vec<String> = urls.into_iter().map(Into::into).collect();
         std::thread::spawn(move || {
             pool::par_for_each(&urls, 6, |url| {
@@ -635,8 +598,8 @@ impl App {
         };
         self.background.set(background);
         self.set_refreshing(true);
-        let agent = self.agent.clone();
-        let db_path = self.paths.db.clone();
+        let agent = self.core.agent().clone();
+        let db_path = self.core.paths.db.clone();
         std::thread::spawn(move || {
             let results = fetch::fetch_all(&agent, &jobs);
             let summary = Store::open(&db_path)
@@ -829,7 +792,7 @@ impl App {
         if !self.pages_pending.borrow_mut().insert(id) {
             return;
         }
-        let agent = self.agent.clone();
+        let agent = self.core.agent().clone();
         std::thread::spawn(move || {
             let result = fetch::fetch_page(&agent, &link).map(|page| {
                 let base = url::Url::parse(&link).expect("scrapable links are valid URLs");
@@ -977,7 +940,7 @@ impl App {
         if urls.is_empty() {
             return;
         }
-        let agent = self.agent.clone();
+        let agent = self.core.agent().clone();
         std::thread::spawn(move || {
             pool::par_for_each(&urls, 4, |url| {
                 let picture = thumbs::load_picture(&agent, url).map(|img| rgba_buffer(&img));
@@ -1062,9 +1025,9 @@ impl App {
     /// Shows the database folder, or the thumbnail cache, in the file manager.
     pub fn open_data_folder(&self, thumbs: bool) {
         let dir = if thumbs {
-            self.paths.thumbs.as_path()
+            self.core.paths.thumbs.as_path()
         } else {
-            self.paths.db.parent().unwrap_or(&self.paths.db)
+            self.core.paths.db.parent().unwrap_or(&self.core.paths.db)
         };
         if let Err(e) = open::that_detached(dir) {
             self.toast(tr!("Couldn't open the folder: {}", e));
@@ -1176,8 +1139,8 @@ impl App {
         }
         ui.set_adding(true);
         ui.set_add_error("".into());
-        let agent = self.agent.clone();
-        let db_path = self.paths.db.clone();
+        let agent = self.core.agent().clone();
+        let db_path = self.core.paths.db.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<AddedSource> {
                 let sub = fetch::subscribe(&agent, &input)?;
@@ -1291,8 +1254,8 @@ impl App {
             "Importing {n} source…",
             "Importing {n} sources…"
         ));
-        let agent = self.agent.clone();
-        let db_path = self.paths.db.clone();
+        let agent = self.core.agent().clone();
+        let db_path = self.core.paths.db.clone();
         std::thread::spawn(move || {
             let summary = subscribe_all(&agent, &db_path, &fresh)
                 .map(|s| ImportSummary {
@@ -1369,7 +1332,7 @@ impl App {
         let gen_ = self.sync_gen.get();
         let session = sync::Session::start(
             &self.sync_config.borrow(),
-            self.paths.db.clone(),
+            self.core.paths.db.clone(),
             name.clone(),
             move |peers| {
                 let _ = slint::invoke_from_event_loop(move || {
@@ -1485,7 +1448,7 @@ impl App {
         self.pulling.set(true);
         self.ui().set_sync_busy(true);
         self.sync_note(&tr!("Pulling everything from {}…", name), false);
-        let db = self.paths.db.clone();
+        let db = self.core.paths.db.clone();
         std::thread::spawn(move || {
             let result = sync::pull(addr, &db).map_err(|e| format!("{e:#}"));
             let _ = slint::invoke_from_event_loop(move || {
@@ -2540,7 +2503,7 @@ mod tests {
         assert_eq!(app.store.stats().unwrap().feeds, 1, "nothing changes yet");
 
         // What the worker does once "Replace" is pressed.
-        let stats = sync::pull(addr, &app.paths.db).unwrap();
+        let stats = sync::pull(addr, &app.core.paths.db).unwrap();
         app.sync_pulled("Desk".into(), Ok(stats));
         let titles: Vec<_> = app.feeds.iter().map(|f| f.title.to_string()).collect();
         assert_eq!(titles, ["https://a.example/rss", "https://b.example/rss"]);
@@ -2646,7 +2609,7 @@ mod tests {
             xml_url: "http://127.0.0.1:9/feed".into(),
             html_url: None,
         };
-        let s = subscribe_all(&app.agent, &app.paths.db, &[dead]).unwrap();
+        let s = subscribe_all(app.core.agent(), &app.core.paths.db, &[dead]).unwrap();
         assert_eq!((s.added, s.skipped, s.failed + s.unreachable), (0, 0, 1));
         assert_eq!(app.store.sources().unwrap().len(), 1, "nothing stored");
     }
@@ -2781,7 +2744,7 @@ mod tests {
 
     /// A second source, so the source filter has something to leave out.
     fn add_other_feed(app: &App) {
-        let store = Store::open(&app.paths.db).unwrap();
+        let store = Store::open(&app.core.paths.db).unwrap();
         store
             .add_feed(
                 "https://other.example/rss",
@@ -2904,7 +2867,10 @@ mod tests {
 
         // Opening the database on another connection doesn't stale the cache.
         let before = app.store.data_version().unwrap();
-        Store::open(&app.paths.db).unwrap().search_terms().unwrap();
+        Store::open(&app.core.paths.db)
+            .unwrap()
+            .search_terms()
+            .unwrap();
         assert_eq!(app.store.data_version().unwrap(), before);
     }
 
