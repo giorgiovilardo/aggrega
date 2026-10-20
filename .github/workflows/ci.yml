@@ -45,8 +45,8 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-  # The same checks as `make lint`. Clippy compiles the crate, so it needs the
-  # same native libraries as the test job.
+  # The same checks as `make lint`. Clippy compiles the crate and its tests, so
+  # it needs the same native libraries as the test job.
   lint:
     runs-on: ubuntu-24.04
     container: archlinux:latest
@@ -71,4 +71,4 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --locked -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings

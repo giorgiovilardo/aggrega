@@ -12,7 +12,7 @@ cargo build --release             # fat LTO, stripped, panic=abort
 cargo test                        # all tests, incl. headless UI tests
 cargo test reader::               # one module's tests
 cargo test layout_adapts_to_window_width   # a single test by name
-cargo fmt --check && cargo clippy -- -D warnings   # lint (= make lint)
+cargo fmt --check && cargo clippy --all-targets -- -D warnings   # lint (= make lint)
 AGGREGA_HOME=/tmp/agg cargo run   # throwaway profile (db + thumbs in one dir, any OS)
 ```
 

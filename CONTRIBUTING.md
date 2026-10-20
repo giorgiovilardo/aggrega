@@ -22,7 +22,7 @@ Check the [roadmap](README.md#roadmap-ideas) and existing issues first; your ide
 
    ```bash
    cargo fmt --check
-   cargo clippy -- -D warnings
+   cargo clippy --all-targets -- -D warnings
    cargo test
    ```
 
