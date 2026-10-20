@@ -73,7 +73,7 @@ make macos-app  # builds Aggrega.app and a .dmg (macOS only, see section 6)
 ```bash
 cargo test                  # parser, storage, HTML/text helpers
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 ```
 
 The tests don't touch the network or your real data. The storage tests use a temporary directory.

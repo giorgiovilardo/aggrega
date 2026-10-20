@@ -18,7 +18,7 @@ test:
 
 lint:
 	cargo fmt --check
-	cargo clippy -- -D warnings
+	cargo clippy --all-targets -- -D warnings
 
 install: release
 	install -Dm755 $(BIN) $(PREFIX)/bin/aggrega
