@@ -23,8 +23,8 @@ use crate::profile::Paths;
 use crate::reader::{self, Block, Kind};
 use crate::search;
 use crate::{
-    AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, SyncPeer, fetch, pool,
-    sync, text, thumbs,
+    AppWindow, ArticleItem, BlockKind, FeedItem, ReaderBlock, ReaderInfo, SyncPeer, pool, sync,
+    text, thumbs,
 };
 
 /// How many articles the list shows at most (newest first).
@@ -732,14 +732,11 @@ impl App {
             }
         };
         let ui = self.ui();
-        let lead = article.image_url.clone();
-        let blocks = reader::tidy(
-            reader::decode(article.body.as_deref().unwrap_or("")),
-            &article.title,
-            lead.as_deref(),
-        );
-        let fetch_page = (article.body.is_none() || reader::needs_full_page(&blocks))
-            && reader::is_scrapable(&article.link);
+        let ops::ReaderContent {
+            blocks,
+            lead,
+            needs_page: fetch_page,
+        } = ops::reader_content(&article);
 
         self.reader_id.set(Some(id));
         *self.reader_link.borrow_mut() = article.link.clone();
@@ -780,12 +777,9 @@ impl App {
         if !self.pages_pending.borrow_mut().insert(id) {
             return;
         }
-        let agent = self.core.agent().clone();
+        let core = self.core.clone();
         std::thread::spawn(move || {
-            let result = fetch::fetch_page(&agent, &link).map(|page| {
-                let base = url::Url::parse(&link).expect("scrapable links are valid URLs");
-                reader::extract_article(&page, &base)
-            });
+            let result = core.full_text(&link);
             let _ =
                 slint::invoke_from_event_loop(move || with_app(|app| app.page_ready(id, result)));
         });
@@ -806,20 +800,20 @@ impl App {
         let Ok(Some(article)) = self.store.reader_article(id) else {
             return;
         };
-        let lead = article.image_url.clone();
-        let blocks = reader::tidy(
-            reader::decode(article.body.as_deref().unwrap_or("")),
-            &article.title,
-            lead.as_deref(),
-        );
-        if (article.body.is_none() || reader::needs_full_page(&blocks))
-            && reader::is_scrapable(&article.link)
-        {
+        let content = ops::reader_content(&article);
+        if content.needs_page {
             // Its pictures are fetched once the page is in (see `page_ready`).
             self.fetch_page(id, article.link);
-            self.load_pictures(id, lead.into_iter().collect());
+            self.load_pictures(id, content.lead.into_iter().collect());
         } else {
-            self.load_pictures(id, lead.into_iter().chain(image_urls(&blocks)).collect());
+            self.load_pictures(
+                id,
+                content
+                    .lead
+                    .into_iter()
+                    .chain(image_urls(&content.blocks))
+                    .collect(),
+            );
         }
     }
 

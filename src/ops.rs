@@ -2,14 +2,15 @@
 
 use std::collections::HashSet;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
-use crate::db::{RefreshSummary, Store};
+use crate::db::{ReaderArticle, RefreshSummary, Store};
 use crate::feed::{self, FeedJob, Source};
 use crate::fetch;
 use crate::opml;
 use crate::pool;
 use crate::profile::Paths;
+use crate::reader::{self, Block};
 
 /// A source that `Core::add_source` stored, with its new row id and how many
 /// articles it came with.
@@ -18,6 +19,33 @@ pub struct AddedSource {
     pub id: i64,
     pub title: String,
     pub articles: usize,
+}
+
+/// What the reader shows for a stored article, before any page is fetched.
+pub struct ReaderContent {
+    pub blocks: Vec<Block>,
+    /// The article's picture, shown above the text.
+    pub lead: Option<String>,
+    /// Whether the feed's copy is too short to read, so the full page is wanted.
+    pub needs_page: bool,
+}
+
+/// Decodes a stored article into reader blocks and works out whether its full
+/// page should be fetched. Makes no network calls.
+pub fn reader_content(article: &ReaderArticle) -> ReaderContent {
+    let lead = article.image_url.clone();
+    let blocks = reader::tidy(
+        reader::decode(article.body.as_deref().unwrap_or("")),
+        &article.title,
+        lead.as_deref(),
+    );
+    let needs_page = (article.body.is_none() || reader::needs_full_page(&blocks))
+        && reader::is_scrapable(&article.link);
+    ReaderContent {
+        blocks,
+        lead,
+        needs_page,
+    }
 }
 
 /// What an OPML import will subscribe to, worked out before anything is fetched.
@@ -84,6 +112,14 @@ impl Core {
         })
     }
 
+    /// Downloads the web page at `link` and extracts its article text. Blocking,
+    /// so meant for a worker thread. Doesn't save anything.
+    pub fn full_text(&self, link: &str) -> Result<Vec<Block>> {
+        let page = fetch::fetch_page(&self.agent, link)?;
+        let base = url::Url::parse(link).with_context(|| format!("bad article link {link}"))?;
+        Ok(reader::extract_article(&page, &base))
+    }
+
     /// Subscribes to the planned sources in parallel (with feed discovery,
     /// like the Add dialog), then stores each one that works, with its first
     /// articles. Blocking, so meant for a worker thread.
@@ -143,7 +179,6 @@ pub fn export_opml(store: &Store) -> Result<(String, usize)> {
 mod tests {
     use super::*;
     use crate::feed::{self, Fetched, NewArticle};
-    use crate::reader;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -345,6 +380,109 @@ mod tests {
             }
         );
         assert!(core.store().unwrap().sources().unwrap().is_empty());
+    }
+
+    fn stored_article(link: &str, body: Option<String>, image_url: Option<&str>) -> ReaderArticle {
+        ReaderArticle {
+            title: "Story".into(),
+            link: link.into(),
+            image_url: image_url.map(Into::into),
+            published: 1_700_000_000,
+            feed_title: "Some Blog".into(),
+            body,
+        }
+    }
+
+    #[test]
+    fn reader_content_wants_the_page_of_an_article_without_a_body() {
+        let article = stored_article("https://blog.org/post", None, None);
+
+        let content = reader_content(&article);
+
+        assert!(content.needs_page);
+        assert!(content.blocks.is_empty());
+    }
+
+    #[test]
+    fn reader_content_does_not_want_the_page_of_a_long_body() {
+        let body = reader::encode(&[Block::new(reader::Kind::Paragraph, "word ".repeat(300))]);
+        let article = stored_article("https://blog.org/post", Some(body), None);
+
+        let content = reader_content(&article);
+
+        assert!(!content.needs_page);
+        assert_eq!(content.blocks.len(), 1);
+    }
+
+    #[test]
+    fn reader_content_never_wants_the_page_of_a_video() {
+        let article = stored_article("https://www.youtube.com/watch?v=x", None, None);
+
+        assert!(!reader_content(&article).needs_page);
+    }
+
+    #[test]
+    fn reader_content_passes_the_lead_picture_through() {
+        let article = stored_article(
+            "https://blog.org/post",
+            None,
+            Some("https://blog.org/a.jpg"),
+        );
+
+        let content = reader_content(&article);
+
+        assert_eq!(content.lead.as_deref(), Some("https://blog.org/a.jpg"));
+    }
+
+    #[test]
+    fn full_text_reports_an_unreachable_page() {
+        let dir = tempfile::Builder::new()
+            .prefix("aggrega-ops-")
+            .tempdir()
+            .unwrap();
+        let core = Core::new(Paths::in_dir(dir.path()).unwrap());
+
+        let err = core.full_text("http://127.0.0.1:9/x").unwrap_err();
+
+        assert!(feed::is_unreachable(&err), "{err:#}");
+    }
+
+    #[test]
+    fn full_text_extracts_the_article_of_a_page_served_over_http() {
+        let dir = tempfile::Builder::new()
+            .prefix("aggrega-ops-")
+            .tempdir()
+            .unwrap();
+        let core = Core::new(Paths::in_dir(dir.path()).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/post", listener.local_addr().unwrap());
+        let text = "word ".repeat(100);
+        let page = format!(
+            "<html><body><nav>Menu</nav><article><p>{}</p></article></body></html>",
+            text.trim_end()
+        );
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().take(1).flatten() {
+                let _request: Vec<_> = BufReader::new(&stream)
+                    .lines()
+                    .map_while(Result::ok)
+                    .take_while(|l| !l.is_empty())
+                    .collect();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    page.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(page.as_bytes());
+            }
+        });
+
+        let blocks = core.full_text(&url).unwrap();
+
+        assert_eq!(
+            blocks,
+            vec![Block::new(reader::Kind::Paragraph, text.trim_end())]
+        );
     }
 
     #[test]
