@@ -8,7 +8,9 @@ mod fetch;
 mod html;
 mod i18n;
 mod opml;
+mod ops;
 mod pool;
+mod profile;
 mod reader;
 mod search;
 mod sync;
@@ -21,8 +23,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use slint::ComponentHandle;
 
-use app::{App, Paths, with_app};
+use app::{App, with_app};
 use db::Store;
+use profile::Paths;
 
 slint::include_modules!();
 
