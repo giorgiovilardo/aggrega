@@ -7,6 +7,15 @@ use crate::feed::FeedJob;
 use crate::fetch;
 use crate::profile::Paths;
 
+/// A source that `Core::add_source` stored, with its new row id and how many
+/// articles it came with.
+#[derive(Debug, PartialEq)]
+pub struct AddedSource {
+    pub id: i64,
+    pub title: String,
+    pub articles: usize,
+}
+
 #[derive(Clone)]
 pub struct Core {
     pub paths: Paths,
@@ -36,13 +45,27 @@ impl Core {
         let results = fetch::fetch_all(&self.agent, jobs);
         self.store()?.apply_refresh(results)
     }
+
+    /// Subscribes to the feed `input` points at and stores it. Blocking, so
+    /// meant for a worker thread.
+    pub fn add_source(&self, input: &str) -> Result<AddedSource> {
+        let sub = fetch::subscribe(&self.agent, input)?;
+        let added = self.store()?.add_feed(&sub.url, &sub.fetched)?;
+        Ok(AddedSource {
+            id: added.id,
+            title: sub.fetched.title,
+            articles: added.articles,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::{Fetched, NewArticle};
+    use crate::feed::{self, Fetched, NewArticle};
     use crate::reader;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
 
     /// A feed on a port nothing listens on, so the fetch fails fast.
     fn unreachable_feed(store: &Store) {
@@ -101,6 +124,58 @@ mod tests {
         assert_eq!(summary.total, 0);
         assert_eq!(summary.new_articles, 0);
         assert!(!summary.offline());
+    }
+
+    #[test]
+    fn add_source_reports_an_unreachable_address_and_stores_nothing() {
+        let dir = tempfile::Builder::new()
+            .prefix("aggrega-ops-")
+            .tempdir()
+            .unwrap();
+        let core = Core::new(Paths::in_dir(dir.path()).unwrap());
+
+        let err = core.add_source("http://127.0.0.1:9/feed.xml").unwrap_err();
+
+        assert!(feed::is_unreachable(&err), "{err:#}");
+        assert!(core.store().unwrap().sources().unwrap().is_empty());
+    }
+
+    #[test]
+    fn add_source_stores_a_feed_served_over_http() {
+        let dir = tempfile::Builder::new()
+            .prefix("aggrega-ops-")
+            .tempdir()
+            .unwrap();
+        let core = Core::new(Paths::in_dir(dir.path()).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/feed.xml", listener.local_addr().unwrap());
+        let xml: &[u8] = include_bytes!("../tests/fixtures/feeds/rss_2.0_spec_1.xml");
+        // Serves two requests: the add, then the same add again.
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().take(2).flatten() {
+                let _request: Vec<_> = BufReader::new(&stream)
+                    .lines()
+                    .map_while(Result::ok)
+                    .take_while(|l| !l.is_empty())
+                    .collect();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    xml.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(xml);
+            }
+        });
+
+        let added = core.add_source(&url).unwrap();
+
+        assert_eq!(added.title, "Scripting News");
+        assert_eq!(added.articles, 2);
+        let sources = core.store().unwrap().sources().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].xml_url, url);
+        let again = core.add_source(&url).unwrap_err();
+        assert_eq!(format!("{again:#}"), "you're already following this source");
     }
 
     #[test]
