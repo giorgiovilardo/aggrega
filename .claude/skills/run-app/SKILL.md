@@ -5,7 +5,7 @@ description: Launch Aggrega locally against a throwaway profile, optionally seed
 
 # Run Aggrega
 
-Aggrega is a GUI app (winit + OpenGL). It needs a display: check `$WAYLAND_DISPLAY` or `$DISPLAY`. If neither is set, say so and don't try to launch it. For layout or behaviour checks without a display, use the headless UI tests in `src/app.rs` instead (see the `precheck` skill).
+Aggrega is a GUI app (winit + OpenGL). On Linux it needs a display: check `$WAYLAND_DISPLAY` or `$DISPLAY`. If neither is set, say so and don't try to launch it. On macOS neither variable exists; the window opens in the logged-in desktop session. For layout or behaviour checks without a display, use the headless UI tests in `src/app.rs` instead (see the `precheck` skill).
 
 ## Never touch the user's real data
 
@@ -36,7 +36,7 @@ To force a theme before launch: `INSERT OR REPLACE INTO settings (key, value) VA
 ## Screenshots
 
 - The opening animation takes about 2.8 s. Wait for it to finish, plus the refresh and thumbnail fade-in, before capturing (roughly 6–8 s after launch), or press a key in the window to skip it.
-- Wayland: `grim` (whole output) or `grim -g "$(slurp)"`. X11: `import -window root` (ImageMagick). The window is frameless, so window-only capture tools may crop oddly. Crop the full-screen shot instead.
+- Wayland: `grim` (whole output) or `grim -g "$(slurp)"`. X11: `import -window root` (ImageMagick). macOS: `screencapture -x shot.png`, which needs Screen Recording permission for the terminal (without it the shot shows only the desktop). The window is frameless, so window-only capture tools may crop oddly. Crop the full-screen shot instead.
 - `docs/screenshots/` holds `light.png`, `dark.png`, `add-source.png` and `intro.png`. When replacing them, keep the same filenames because the README links to them, and show the user the new images before committing.
 
 When finished, stop the app and delete the temp profile.
