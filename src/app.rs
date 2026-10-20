@@ -19,7 +19,7 @@ use crate::db::{Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, S
 use crate::feed::{self, Source};
 use crate::i18n::{self, Lang, tr, trn};
 use crate::opml;
-use crate::ops::Core;
+use crate::ops::{AddedSource, Core};
 use crate::profile::Paths;
 use crate::reader::{self, Block, Kind};
 use crate::search;
@@ -59,13 +59,6 @@ pub fn with_app(f: impl FnOnce(&Rc<App>)) {
             f(app)
         }
     });
-}
-
-/// A source the Add dialog stored, as reported back to the UI.
-struct AddedSource {
-    id: i64,
-    title: String,
-    articles: usize,
 }
 
 /// A finished thumbnail, converted to Slint pixels on the worker thread so the
@@ -1135,24 +1128,14 @@ impl App {
         }
         ui.set_adding(true);
         ui.set_add_error("".into());
-        let agent = self.core.agent().clone();
-        let db_path = self.core.paths.db.clone();
+        let core = self.core.clone();
         std::thread::spawn(move || {
-            let result = (|| -> Result<AddedSource> {
-                let sub = fetch::subscribe(&agent, &input)?;
-                let added = Store::open(&db_path)?.add_feed(&sub.url, &sub.fetched)?;
-                Ok(AddedSource {
-                    id: added.id,
-                    title: sub.fetched.title,
-                    articles: added.articles,
-                })
-            })()
-            .map_err(|e| format!("{e:#}"));
+            let result = core.add_source(&input);
             let _ = slint::invoke_from_event_loop(move || with_app(|app| app.add_done(result)));
         });
     }
 
-    fn add_done(&self, result: Result<AddedSource, String>) {
+    fn add_done(&self, result: Result<AddedSource>) {
         let ui = self.ui();
         ui.set_adding(false);
         match result {
@@ -1169,7 +1152,7 @@ impl App {
                 ));
             }
             Err(e) => {
-                let mut e = e;
+                let mut e = format!("{e:#}");
                 if let Some(first) = e.get_mut(0..1) {
                     first.make_ascii_uppercase();
                 }
