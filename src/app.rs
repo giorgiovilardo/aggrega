@@ -415,20 +415,19 @@ impl App {
         std::thread::spawn(move || {
             let terms = Store::open(&db_path)
                 .and_then(|s| s.search_terms())
-                .map(search::Terms::new)
-                .map_err(|e| format!("{e:#}"));
+                .map(search::Terms::new);
             let _ = slint::invoke_from_event_loop(move || {
                 with_app(|app| app.terms_ready(version, terms))
             });
         });
     }
 
-    fn terms_ready(&self, version: i64, terms: Result<search::Terms, String>) {
+    fn terms_ready(&self, version: i64, terms: Result<search::Terms>) {
         self.terms_loading.set(false);
         let terms = match terms {
             Ok(terms) => terms,
             Err(e) => {
-                eprintln!("aggrega: couldn't read the search vocabulary: {e}");
+                eprintln!("aggrega: couldn't read the search vocabulary: {e:#}");
                 return;
             }
         };
@@ -1346,23 +1345,21 @@ impl App {
         self.sync_note(&tr!("Connecting to {}…", address), false);
         let gen_ = self.sync_gen.get();
         std::thread::spawn(move || {
-            let result = sync::resolve(&address)
-                .and_then(|addr| Ok((addr, sync::info(addr)?)))
-                .map_err(|e| format!("{e:#}"));
+            let result = sync::resolve(&address).and_then(|addr| Ok((addr, sync::info(addr)?)));
             let _ = slint::invoke_from_event_loop(move || {
                 with_app(|app| app.sync_info_ready(gen_, result))
             });
         });
     }
 
-    fn sync_info_ready(&self, gen_: u64, result: Result<(SocketAddr, sync::Remote), String>) {
+    fn sync_info_ready(&self, gen_: u64, result: Result<(SocketAddr, sync::Remote)>) {
         if gen_ != self.sync_gen.get() {
             return;
         }
         self.ui().set_sync_busy(false);
         let (addr, remote) = match result {
             Ok(r) => r,
-            Err(e) => return self.sync_note(&capitalize(&e), true),
+            Err(e) => return self.sync_note(&capitalize(&format!("{e:#}")), true),
         };
         if remote.schema > SCHEMA_VERSION {
             return self.sync_note(
@@ -1404,21 +1401,21 @@ impl App {
         self.sync_note(&tr!("Pulling everything from {}…", name), false);
         let db = self.core.paths.db.clone();
         std::thread::spawn(move || {
-            let result = sync::pull(addr, &db).map_err(|e| format!("{e:#}"));
+            let result = sync::pull(addr, &db);
             let _ = slint::invoke_from_event_loop(move || {
                 with_app(|app| app.sync_pulled(name, result))
             });
         });
     }
 
-    fn sync_pulled(&self, name: String, result: Result<Stats, String>) {
+    fn sync_pulled(&self, name: String, result: Result<Stats>) {
         self.pulling.set(false);
         let ui = self.ui();
         ui.set_sync_busy(false);
         let stats = match result {
             Ok(s) => s,
             Err(e) => {
-                let msg = tr!("Couldn't pull from {}: {}", name, e);
+                let msg = tr!("Couldn't pull from {}: {}", name, format!("{e:#}"));
                 self.sync_note(&msg, true);
                 return self.toast(msg);
             }
@@ -2431,7 +2428,7 @@ mod tests {
             "the reader showed an article that's gone"
         );
 
-        app.sync_pulled("Desk".into(), Err("connection reset".into()));
+        app.sync_pulled("Desk".into(), Err(anyhow::anyhow!("connection reset")));
         assert!(ui.get_sync_note_error());
         assert_eq!(app.feeds.row_count(), 2, "a failed pull changes nothing");
         drop(server);
@@ -2442,7 +2439,7 @@ mod tests {
         let (ui, app, _dir) = start("sync-errors");
         app.sync_active(true);
         let gen_ = app.sync_gen.get();
-        app.sync_info_ready(gen_, Err("couldn't reach 10.0.0.9:47812".into()));
+        app.sync_info_ready(gen_, Err(anyhow::anyhow!("couldn't reach 10.0.0.9:47812")));
         assert_eq!(ui.get_sync_note(), "Couldn't reach 10.0.0.9:47812");
         assert!(ui.get_sync_note_error());
 
