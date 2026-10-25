@@ -1345,19 +1345,19 @@ impl App {
         self.sync_note(&tr!("Connecting to {}…", address), false);
         let gen_ = self.sync_gen.get();
         std::thread::spawn(move || {
-            let result = sync::resolve(&address).and_then(|addr| Ok((addr, sync::info(addr)?)));
+            let result = sync::resolve(&address).and_then(sync::info);
             let _ = slint::invoke_from_event_loop(move || {
                 with_app(|app| app.sync_info_ready(gen_, result))
             });
         });
     }
 
-    fn sync_info_ready(&self, gen_: u64, result: Result<(SocketAddr, sync::Remote)>) {
+    fn sync_info_ready(&self, gen_: u64, result: Result<sync::Remote>) {
         if gen_ != self.sync_gen.get() {
             return;
         }
         self.ui().set_sync_busy(false);
-        let (addr, remote) = match result {
+        let remote = match result {
             Ok(r) => r,
             Err(e) => return self.sync_note(&capitalize(&format!("{e:#}")), true),
         };
@@ -1380,7 +1380,8 @@ impl App {
             describe(remote.stats, true),
             describe(ours, false),
         );
-        self.sync_pending.replace(Some((addr, remote.name.clone())));
+        self.sync_pending
+            .replace(Some((remote.addr, remote.name.clone())));
         self.ui().invoke_ask_sync(remote.name.into(), detail.into());
     }
 
@@ -2401,10 +2402,10 @@ mod tests {
         app.sync_active(true);
         let gen_ = app.sync_gen.get();
         // Results from an earlier visit to the tab are dropped.
-        app.sync_info_ready(gen_ - 1, Ok((addr, sync::info(addr).unwrap())));
+        app.sync_info_ready(gen_ - 1, Ok(sync::info(addr).unwrap()));
         assert!(app.sync_pending.borrow().is_none());
 
-        app.sync_info_ready(gen_, Ok((addr, sync::info(addr).unwrap())));
+        app.sync_info_ready(gen_, Ok(sync::info(addr).unwrap()));
         testing::mock_elapsed_time(Duration::from_secs(1));
         assert!(shows("Replace everything with “Desk”?"));
         assert!(shows(
@@ -2444,6 +2445,7 @@ mod tests {
         assert!(ui.get_sync_note_error());
 
         let newer = sync::Remote {
+            addr: "127.0.0.1:9".parse().unwrap(),
             name: "Desk".into(),
             schema: SCHEMA_VERSION + 1,
             stats: Stats {
@@ -2452,7 +2454,7 @@ mod tests {
                 unread: 1,
             },
         };
-        app.sync_info_ready(gen_, Ok(("127.0.0.1:9".parse().unwrap(), newer)));
+        app.sync_info_ready(gen_, Ok(newer));
         assert!(ui.get_sync_note().contains("newer version"));
         assert!(app.sync_pending.borrow().is_none(), "nothing to confirm");
 

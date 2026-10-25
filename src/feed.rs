@@ -60,6 +60,13 @@ pub struct Source {
 /// `Ok(None)` means the server answered "304 Not Modified".
 pub type FetchResult = Result<Option<Fetched>>;
 
+/// One feed's outcome in a refresh, as `Store::apply_refresh` takes it.
+#[derive(Debug)]
+pub struct FeedRefresh {
+    pub id: i64,
+    pub result: FetchResult,
+}
+
 /// The server couldn't be reached at all (no network, DNS failure, timeout…).
 /// Unlike an HTTP error this says nothing about the source itself, so it's
 /// never recorded as a broken feed or a broken thumbnail.

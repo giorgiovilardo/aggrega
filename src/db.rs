@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
-use crate::feed::{FeedJob, FetchResult, Fetched, Source, is_unreachable};
+use crate::feed::{FeedJob, FeedRefresh, Fetched, Source, is_unreachable};
 use crate::search;
 
 pub const SCHEMA_VERSION: i32 = 3;
@@ -292,14 +292,14 @@ impl Store {
     }
 
     /// Stores the results of a refresh in a single transaction.
-    pub fn apply_refresh(&self, results: Vec<(i64, FetchResult)>) -> Result<RefreshSummary> {
+    pub fn apply_refresh(&self, results: Vec<FeedRefresh>) -> Result<RefreshSummary> {
         let mut summary = RefreshSummary {
             total: results.len(),
             ..Default::default()
         };
         let ts = now();
         let tx = self.conn.unchecked_transaction()?;
-        for (id, result) in results {
+        for FeedRefresh { id, result } in results {
             match result {
                 Ok(Some(fetched)) => {
                     summary.new_articles += insert_articles(&tx, id, &fetched)?;
@@ -723,13 +723,19 @@ mod tests {
         assert_eq!(store.feeds()?[0].unread, 2);
 
         // Refreshing with the same items adds nothing.
-        let s = store.apply_refresh(vec![(id, Ok(Some(sample(4))))])?;
+        let s = store.apply_refresh(vec![FeedRefresh {
+            id,
+            result: Ok(Some(sample(4))),
+        }])?;
         assert_eq!(s.new_articles, 1);
 
         // Being offline neither marks the source as broken nor loses articles.
         let before = store.articles(ArticleFilter::default(), 10)?.len();
         let offline = anyhow::Error::new(crate::feed::Unreachable("offline".into()));
-        let s = store.apply_refresh(vec![(id, Err(offline))])?;
+        let s = store.apply_refresh(vec![FeedRefresh {
+            id,
+            result: Err(offline),
+        }])?;
         assert!(s.offline());
         assert!(!store.feeds()?[0].has_error);
         assert_eq!(store.articles(ArticleFilter::default(), 10)?.len(), before);
@@ -993,10 +999,16 @@ mod tests {
         assert_eq!(index_docs(&store, "body")?, 3);
 
         // The same guids again: nothing new, and no second index row.
-        store.apply_refresh(vec![(feed, Ok(Some(sample(3))))])?;
+        store.apply_refresh(vec![FeedRefresh {
+            id: feed,
+            result: Ok(Some(sample(3))),
+        }])?;
         assert_eq!(index_docs(&store, "post")?, 3);
 
-        store.apply_refresh(vec![(feed, Ok(Some(sample(4))))])?;
+        store.apply_refresh(vec![FeedRefresh {
+            id: feed,
+            result: Ok(Some(sample(4))),
+        }])?;
         assert_eq!(index_docs(&store, "post")?, 4);
         assert_eq!(found(&store, "post 3")?, ["Post 3"]);
         Ok(())

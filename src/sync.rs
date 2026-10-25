@@ -292,6 +292,8 @@ fn instance_id() -> u64 {
 /// What another computer has, before pulling it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
+    /// The address it was reached at.
+    pub addr: SocketAddr,
     pub name: String,
     pub schema: i32,
     pub stats: Stats,
@@ -353,6 +355,7 @@ pub fn info(addr: SocketAddr) -> Result<Remote> {
     };
     let (schema, feeds, articles, unread) = (num()?, num()?, num()?, num()?);
     Ok(Remote {
+        addr,
         name: parts.next().unwrap_or("").to_string(),
         schema: schema as i32,
         stats: Stats {

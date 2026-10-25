@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use url::Url;
 
-use crate::feed::{self, FeedJob, FetchResult, Subscription, Unreachable};
+use crate::feed::{self, FeedJob, FeedRefresh, FetchResult, Subscription, Unreachable};
 use crate::pool;
 
 const USER_AGENT: &str = concat!(
@@ -124,8 +124,11 @@ pub fn fetch_feed(agent: &ureq::Agent, job: &FeedJob) -> FetchResult {
 }
 
 /// Fetches all jobs on a bounded pool of threads.
-pub fn fetch_all(agent: &ureq::Agent, jobs: &[FeedJob]) -> Vec<(i64, FetchResult)> {
-    pool::par_map(jobs, 8, |job| (job.id, fetch_feed(agent, job)))
+pub fn fetch_all(agent: &ureq::Agent, jobs: &[FeedJob]) -> Vec<FeedRefresh> {
+    pool::par_map(jobs, 8, |job| FeedRefresh {
+        id: job.id,
+        result: fetch_feed(agent, job),
+    })
 }
 
 /// Turns whatever the user typed into a feed URL, discovering the feed
