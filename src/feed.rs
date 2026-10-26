@@ -59,7 +59,7 @@ pub struct Source {
 /// A downloaded body that couldn't be parsed as a feed.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("not a valid RSS, Atom or JSON feed")]
+    #[error("unrecognised feed format")]
     NotAFeed(#[from] feed_rs::parser::ParseFeedError),
 }
 

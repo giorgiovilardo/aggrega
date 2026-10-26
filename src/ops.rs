@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::db::{ReaderArticle, RefreshSummary, Store};
 use crate::feed::{FeedJob, Source};
@@ -115,8 +115,7 @@ impl Core {
     /// Downloads the web page at `link` and extracts its article text. Blocking,
     /// so meant for a worker thread. Doesn't save anything.
     pub fn full_text(&self, link: &str) -> Result<Vec<Block>> {
-        let page = fetch::fetch_page(&self.agent, link)?;
-        let base = url::Url::parse(link).with_context(|| format!("bad article link {link}"))?;
+        let (base, page) = fetch::fetch_page(&self.agent, link)?;
         Ok(reader::extract_article(&page, &base))
     }
 
@@ -156,7 +155,8 @@ pub fn plan_import(store: &Store, opml_text: &str) -> Result<ImportPlan> {
     let fresh: Vec<Source> = sources
         .into_iter()
         .filter(|s| {
-            let url = fetch::normalize_url(&s.xml_url).unwrap_or_else(|_| s.xml_url.clone());
+            let url =
+                fetch::normalize_url(&s.xml_url).map_or_else(|_| s.xml_url.clone(), String::from);
             !known.contains(&url)
         })
         .collect();
@@ -179,8 +179,6 @@ pub fn export_opml(store: &Store) -> Result<(String, usize)> {
 mod tests {
     use super::*;
     use crate::feed::{Fetched, NewArticle};
-    use std::io::{BufRead, BufReader, Write};
-    use std::net::TcpListener;
 
     /// A feed on a port nothing listens on, so the fetch fails fast.
     fn unreachable_feed(store: &Store) {
@@ -268,25 +266,12 @@ mod tests {
             .tempdir()
             .unwrap();
         let core = Core::new(Paths::in_dir(dir.path()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/feed.xml", listener.local_addr().unwrap());
-        let xml: &[u8] = include_bytes!("../tests/fixtures/feeds/rss_2.0_spec_1.xml");
+        let xml = include_bytes!("../tests/fixtures/feeds/rss_2.0_spec_1.xml");
         // Serves two requests: the add, then the same add again.
-        std::thread::spawn(move || {
-            for mut stream in listener.incoming().take(2).flatten() {
-                let _request: Vec<_> = BufReader::new(&stream)
-                    .lines()
-                    .map_while(Result::ok)
-                    .take_while(|l| !l.is_empty())
-                    .collect();
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    xml.len()
-                );
-                let _ = stream.write_all(head.as_bytes());
-                let _ = stream.write_all(xml);
-            }
-        });
+        let url = format!(
+            "{}/feed.xml",
+            fetch::serve("application/rss+xml", xml.to_vec(), 2)
+        );
 
         let added = core.add_source(&url).unwrap();
 
@@ -466,28 +451,12 @@ mod tests {
             .tempdir()
             .unwrap();
         let core = Core::new(Paths::in_dir(dir.path()).unwrap());
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/post", listener.local_addr().unwrap());
         let text = "word ".repeat(100);
         let page = format!(
             "<html><body><nav>Menu</nav><article><p>{}</p></article></body></html>",
             text.trim_end()
         );
-        std::thread::spawn(move || {
-            for mut stream in listener.incoming().take(1).flatten() {
-                let _request: Vec<_> = BufReader::new(&stream)
-                    .lines()
-                    .map_while(Result::ok)
-                    .take_while(|l| !l.is_empty())
-                    .collect();
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    page.len()
-                );
-                let _ = stream.write_all(head.as_bytes());
-                let _ = stream.write_all(page.as_bytes());
-            }
-        });
+        let url = format!("{}/post", fetch::serve("text/html", page.into_bytes(), 1));
 
         let blocks = core.full_text(&url).unwrap();
 

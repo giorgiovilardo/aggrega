@@ -41,7 +41,8 @@ pub enum Error {
         #[source]
         source: ureq::Error,
     },
-    /// The request failed for another reason (TLS, a bad redirect…).
+    /// The request, or reading its answer, failed for another reason (TLS, a
+    /// bad redirect, a body that doesn't decompress…).
     #[error("request to {url} failed")]
     Request {
         url: String,
@@ -50,22 +51,23 @@ pub enum Error {
     },
     #[error("{url} answered HTTP {status}")]
     Status { url: String, status: u16 },
-    /// The body couldn't be read, or was larger than allowed.
-    #[error("couldn't read the response from {url}")]
-    Body {
-        url: String,
-        #[source]
-        source: ureq::Error,
-    },
+    /// The body reached the download limit, which is the server's doing.
+    #[error("the response from {url} reached the {limit}-byte limit")]
+    TooLarge { url: String, limit: u64 },
     #[error("{url} isn't a valid feed")]
     Feed {
         url: String,
         #[source]
         source: feed::Error,
     },
-    /// Neither the address nor any feed it links to is a feed.
+    /// Neither the address nor any feed it links to is a feed. `parse` is why
+    /// the address itself isn't a feed.
     #[error("couldn't find an RSS, Atom or JSON feed at {url}")]
-    NoFeed { url: String },
+    NoFeed {
+        url: String,
+        #[source]
+        parse: feed::Error,
+    },
 }
 
 /// `Ok(None)` means the server answered "304 Not Modified".
@@ -94,6 +96,44 @@ struct Response {
     body: Vec<u8>,
 }
 
+impl Response {
+    /// The response if the server answered 2xx, else a `Status` error for `url`.
+    fn error_for_status(self, url: &str) -> Result<Self, Error> {
+        if (200..300).contains(&self.status) {
+            Ok(self)
+        } else {
+            Err(Error::Status {
+                url: url.to_string(),
+                status: self.status,
+            })
+        }
+    }
+
+    /// The body as a feed, with the validators for the next conditional fetch.
+    fn parse_feed(&self, url: &str) -> Result<Fetched, feed::Error> {
+        let mut fetched = feed::parse(url, &self.body)?;
+        fetched.etag.clone_from(&self.etag);
+        fetched.last_modified.clone_from(&self.last_modified);
+        Ok(fetched)
+    }
+}
+
+impl Error {
+    /// Names what went wrong with a request to `url` or reading its body.
+    fn from_ureq(url: &str, source: ureq::Error) -> Self {
+        let url = url.to_owned();
+        match source {
+            ureq::Error::Io(_)
+            | ureq::Error::Timeout(_)
+            | ureq::Error::HostNotFound
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::BodyStalled => Self::Unreachable { url, source },
+            ureq::Error::BodyExceedsLimit(limit) => Self::TooLarge { url, limit },
+            source => Self::Request { url, source },
+        }
+    }
+}
+
 fn get(
     agent: &ureq::Agent,
     url: &str,
@@ -108,21 +148,7 @@ fn get(
     for (k, v) in headers {
         req = req.header(*k, *v);
     }
-    let mut resp = req.call().map_err(|source| {
-        let url = url.to_string();
-        if matches!(
-            source,
-            ureq::Error::Io(_)
-                | ureq::Error::Timeout(_)
-                | ureq::Error::HostNotFound
-                | ureq::Error::ConnectionFailed
-                | ureq::Error::BodyStalled
-        ) {
-            Error::Unreachable { url, source }
-        } else {
-            Error::Request { url, source }
-        }
-    })?;
+    let mut resp = req.call().map_err(|e| Error::from_ureq(url, e))?;
     let status = resp.status().as_u16();
     let header = |name: &str| {
         resp.headers()
@@ -139,10 +165,7 @@ fn get(
             .with_config()
             .limit(limit)
             .read_to_vec()
-            .map_err(|source| Error::Body {
-                url: url.to_string(),
-                source,
-            })?
+            .map_err(|e| Error::from_ureq(url, e))?
     };
     Ok(Response {
         status,
@@ -167,12 +190,10 @@ pub fn fetch_feed(agent: &ureq::Agent, job: &FeedJob) -> FetchResult {
     match resp.status {
         304 => Ok(None),
         200..=299 => {
-            let mut fetched = feed::parse(&job.url, &resp.body).map_err(|source| Error::Feed {
+            let fetched = resp.parse_feed(&job.url).map_err(|source| Error::Feed {
                 url: job.url.clone(),
                 source,
             })?;
-            fetched.etag = resp.etag;
-            fetched.last_modified = resp.last_modified;
             Ok(Some(fetched))
         }
         status => Err(Error::Status {
@@ -193,26 +214,21 @@ pub fn fetch_all(agent: &ureq::Agent, jobs: &[FeedJob]) -> Vec<FeedRefresh> {
 /// Turns whatever the user typed into a feed URL, discovering the feed
 /// from an HTML page if needed. Returns the final feed URL and its contents.
 pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription, Error> {
-    let url = normalize_url(input)?;
-    let resp = get(agent, &url, FEED_ACCEPT, &[], MAX_FEED_BYTES)?;
-    if !(200..300).contains(&resp.status) {
-        return Err(Error::Status {
-            url,
-            status: resp.status,
-        });
-    }
-    if let Ok(mut f) = feed::parse(&url, &resp.body) {
-        f.etag = resp.etag;
-        f.last_modified = resp.last_modified;
-        return Ok(Subscription { url, fetched: f });
-    }
+    let base = normalize_url(input)?;
+    let url = base.as_str();
+    let resp = get(agent, url, FEED_ACCEPT, &[], MAX_FEED_BYTES)?.error_for_status(url)?;
+    let parse = match resp.parse_feed(url) {
+        Ok(fetched) => {
+            return Ok(Subscription {
+                url: base.into(),
+                fetched,
+            });
+        }
+        Err(e) => e,
+    };
 
     // Not a feed: look for <link rel="alternate"> tags, then common paths.
     let html = String::from_utf8_lossy(&resp.body);
-    let base = Url::parse(&url).map_err(|source| Error::InvalidAddress {
-        input: url.clone(),
-        source,
-    })?;
     let mut candidates = feed::discover_links(&html, &base);
     for p in [
         "/feed",
@@ -230,25 +246,25 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription, Error
     let mut seen = std::collections::HashSet::new();
     for c in candidates
         .into_iter()
-        .filter(|c| *c != url && seen.insert(c.clone()))
+        .filter(|c| c != url && seen.insert(c.clone()))
     {
-        let Ok(r) = get(agent, &c, FEED_ACCEPT, &[], MAX_FEED_BYTES) else {
+        let Ok(r) =
+            get(agent, &c, FEED_ACCEPT, &[], MAX_FEED_BYTES).and_then(|r| r.error_for_status(&c))
+        else {
             continue;
         };
-        if !(200..300).contains(&r.status) {
-            continue;
-        }
-        if let Ok(mut f) = feed::parse(&c, &r.body) {
-            f.etag = r.etag;
-            f.last_modified = r.last_modified;
-            return Ok(Subscription { url: c, fetched: f });
+        if let Ok(fetched) = r.parse_feed(&c) {
+            return Ok(Subscription { url: c, fetched });
         }
     }
-    Err(Error::NoFeed { url })
+    Err(Error::NoFeed {
+        url: base.into(),
+        parse,
+    })
 }
 
-/// A typed address as a full http(s) URL, the form feeds are stored under.
-pub fn normalize_url(input: &str) -> Result<String, Error> {
+/// A typed address as a full http(s) URL. Feeds are stored under its string form.
+pub fn normalize_url(input: &str) -> Result<Url, Error> {
     let s = input.trim();
     if s.is_empty() {
         return Err(Error::EmptyAddress);
@@ -267,25 +283,25 @@ pub fn normalize_url(input: &str) -> Result<String, Error> {
             scheme: u.scheme().to_string(),
         });
     }
-    Ok(u.to_string())
+    Ok(u)
 }
 
-/// Downloads an article's web page for the reader view.
-pub fn fetch_page(agent: &ureq::Agent, url: &str) -> Result<String, Error> {
+/// Downloads an article's web page for the reader view. Also returns the
+/// parsed address, which the page's relative links resolve against.
+pub fn fetch_page(agent: &ureq::Agent, link: &str) -> Result<(Url, String), Error> {
+    let base = Url::parse(link).map_err(|source| Error::InvalidAddress {
+        input: link.to_string(),
+        source,
+    })?;
     let r = get(
         agent,
-        url,
+        link,
         "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
         &[],
         MAX_PAGE_BYTES,
-    )?;
-    if !(200..300).contains(&r.status) {
-        return Err(Error::Status {
-            url: url.to_string(),
-            status: r.status,
-        });
-    }
-    Ok(String::from_utf8_lossy(&r.body).into_owned())
+    )?
+    .error_for_status(link)?;
+    Ok((base, String::from_utf8_lossy(&r.body).into_owned()))
 }
 
 /// Downloads an image (thumbnail source).
@@ -296,20 +312,40 @@ pub fn download_image(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, Error> 
         "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8",
         &[],
         MAX_IMAGE_BYTES,
-    )?;
-    if !(200..300).contains(&r.status) {
-        return Err(Error::Status {
-            url: url.to_string(),
-            status: r.status,
-        });
-    }
+    )?
+    .error_for_status(url)?;
     Ok(r.body)
+}
+
+/// Answers the next `connections` HTTP requests on a local port with `body`
+/// as `content_type`, and returns the server's address.
+#[cfg(test)]
+pub(crate) fn serve(content_type: &'static str, body: Vec<u8>, connections: usize) -> String {
+    use std::io::{BufRead, BufReader, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().take(connections).flatten() {
+            let _request: Vec<_> = BufReader::new(&stream)
+                .lines()
+                .map_while(Result::ok)
+                .take_while(|l| !l.is_empty())
+                .collect();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    format!("http://{addr}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn refused_connection_counts_as_unreachable() {
         // Port 9 on localhost is closed: the request fails before any HTTP exchange.
@@ -326,7 +362,7 @@ mod tests {
     #[test]
     fn normalizes_urls() {
         assert_eq!(
-            normalize_url("example.com/feed").unwrap(),
+            normalize_url("example.com/feed").unwrap().as_str(),
             "https://example.com/feed"
         );
         assert!(matches!(normalize_url("  "), Err(Error::EmptyAddress)));
@@ -338,5 +374,48 @@ mod tests {
             normalize_url("https://exa mple.com"),
             Err(Error::InvalidAddress { input, .. }) if input == "https://exa mple.com"
         ));
+    }
+
+    #[test]
+    fn a_body_over_the_limit_is_too_large() {
+        let url = format!(
+            "{}/big",
+            serve("text/plain", b"0123456789abcdefghij".to_vec(), 1)
+        );
+        let Err(err) = get(&agent(), &url, "*/*", &[], 10) else {
+            panic!("the body wasn't limited");
+        };
+        assert!(matches!(err, Error::TooLarge { limit: 10, .. }), "{err}");
+    }
+
+    #[test]
+    fn a_malformed_address_is_invalid_for_a_page() {
+        assert!(matches!(
+            fetch_page(&agent(), "not a url"),
+            Err(Error::InvalidAddress { input, .. }) if input == "not a url"
+        ));
+    }
+
+    #[test]
+    fn a_malformed_feed_is_kept_as_the_reason_no_feed_was_found() {
+        // The address and its seven common feed paths all serve the same broken feed.
+        let url = serve(
+            "application/rss+xml",
+            b"<rss version=\"2.0\"><channel><title>Broken".to_vec(),
+            8,
+        );
+
+        let err = subscribe(&agent(), &url).unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::NoFeed {
+                    parse: feed::Error::NotAFeed(_),
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 }
