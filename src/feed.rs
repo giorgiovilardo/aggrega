@@ -2,7 +2,7 @@
 //! half of fetching, which turns a downloaded feed (or the HTML page
 //! advertising one) into articles ready to store.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use feed_rs::model::Entry;
 use url::Url;
 
@@ -85,13 +85,19 @@ pub fn is_unreachable(err: &anyhow::Error) -> bool {
     err.downcast_ref::<Unreachable>().is_some()
 }
 
+/// A downloaded body that couldn't be parsed as a feed.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("not a valid RSS, Atom or JSON feed")]
+    NotAFeed(#[from] feed_rs::parser::ParseFeedError),
+}
+
 /// Parses an RSS, Atom or JSON feed downloaded from `url`.
-pub fn parse(url: &str, body: &[u8]) -> Result<Fetched> {
+pub fn parse(url: &str, body: &[u8]) -> Result<Fetched, Error> {
     let feed = feed_rs::parser::Builder::new()
         .base_uri(Some(url))
         .build()
-        .parse(body)
-        .context("not a valid RSS/Atom feed")?;
+        .parse(body)?;
 
     let now = chrono::Utc::now().timestamp();
     let title = feed
@@ -414,7 +420,12 @@ mod tests {
                 reader::Block::new(reader::Kind::Image, "https://demo.org/pic.jpg"),
             ]
         );
-        assert!(parse("https://demo.org/rss", b"<html>not a feed</html>").is_err());
+    }
+
+    #[test]
+    fn garbage_is_not_a_feed() {
+        let err = parse("https://demo.org/rss", b"<html>not a feed</html>").unwrap_err();
+        assert!(matches!(err, Error::NotAFeed(_)), "{err}");
     }
 
     #[test]

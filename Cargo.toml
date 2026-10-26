@@ -22,6 +22,7 @@ open = "5"
 # no GTK, no async runtime.
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+thiserror = "2"
 ureq = "3"
 url = "2"
 
