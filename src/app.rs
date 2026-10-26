@@ -1314,7 +1314,8 @@ impl App {
         };
         ui.set_sync_device(device.into());
         if !session.problems.is_empty() && !self.pulling.get() {
-            self.sync_note(&session.problems.join(" "), true);
+            let problems: Vec<_> = session.problems.iter().map(problem_message).collect();
+            self.sync_note(&problems.join(" "), true);
         }
         self.sync.replace(Some(session));
     }
@@ -1364,14 +1365,16 @@ impl App {
         });
     }
 
-    fn sync_info_ready(&self, gen_: u64, result: Result<sync::Remote>) {
+    fn sync_info_ready(&self, gen_: u64, result: Result<sync::Remote, sync::Error>) {
         if gen_ != self.sync_gen.get() {
             return;
         }
         self.ui().set_sync_busy(false);
         let remote = match result {
             Ok(r) => r,
-            Err(e) => return self.sync_note(&capitalize(&format!("{e:#}")), true),
+            Err(e) => {
+                return self.sync_note(&capitalize(&format!("{:#}", anyhow::Error::from(e))), true);
+            }
         };
         if remote.schema > SCHEMA_VERSION {
             return self.sync_note(
@@ -1421,14 +1424,18 @@ impl App {
         });
     }
 
-    fn sync_pulled(&self, name: String, result: Result<Stats>) {
+    fn sync_pulled(&self, name: String, result: Result<Stats, sync::Error>) {
         self.pulling.set(false);
         let ui = self.ui();
         ui.set_sync_busy(false);
         let stats = match result {
             Ok(s) => s,
             Err(e) => {
-                let msg = tr!("Couldn't pull from {}: {}", name, format!("{e:#}"));
+                let msg = tr!(
+                    "Couldn't pull from {}: {}",
+                    name,
+                    format!("{:#}", anyhow::Error::from(e))
+                );
                 self.sync_note(&msg, true);
                 return self.toast(msg);
             }
@@ -1630,6 +1637,18 @@ fn describe(s: Stats, unread: bool) -> String {
         text += &trn!(s.unread, "({n} unread)", "({n} unread)");
     }
     text
+}
+
+/// What a sync problem says, in the interface language.
+fn problem_message(problem: &sync::Problem) -> String {
+    match problem {
+        sync::Problem::CantServe(e) => tr!("Other computers can't pull from this one: {}", e),
+        sync::Problem::BeaconPortInUse(port) => tr!(
+            "Can't look for other computers: port {} is in use. Enter an address instead.",
+            port
+        ),
+        sync::Problem::CantDiscover(e) => tr!("Can't look for other computers: {}", e),
+    }
 }
 
 fn capitalize(s: &str) -> String {
@@ -2444,7 +2463,14 @@ mod tests {
             "the reader showed an article that's gone"
         );
 
-        app.sync_pulled("Desk".into(), Err(anyhow::anyhow!("connection reset")));
+        let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        app.sync_pulled(
+            "Desk".into(),
+            Err(sync::Error::Connection {
+                addr,
+                source: reset,
+            }),
+        );
         assert!(ui.get_sync_note_error());
         assert_eq!(app.feeds.row_count(), 2, "a failed pull changes nothing");
         drop(server);
@@ -2455,8 +2481,15 @@ mod tests {
         let (ui, app, _dir) = start("sync-errors");
         app.sync_active(true);
         let gen_ = app.sync_gen.get();
-        app.sync_info_ready(gen_, Err(anyhow::anyhow!("couldn't reach 10.0.0.9:47812")));
-        assert_eq!(ui.get_sync_note(), "Couldn't reach 10.0.0.9:47812");
+        let timed_out = sync::Error::Unreachable {
+            addr: "10.0.0.9:47812".parse().unwrap(),
+            source: std::io::Error::from(std::io::ErrorKind::TimedOut),
+        };
+        app.sync_info_ready(gen_, Err(timed_out));
+        assert_eq!(
+            ui.get_sync_note(),
+            "Couldn't reach 10.0.0.9:47812: timed out"
+        );
         assert!(ui.get_sync_note_error());
 
         let newer = sync::Remote {
