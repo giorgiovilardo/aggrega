@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use anyhow::{Context, Result};
 
 use crate::db::{ReaderArticle, RefreshSummary, Store};
-use crate::feed::{self, FeedJob, Source};
+use crate::feed::{FeedJob, Source};
 use crate::fetch;
 use crate::opml;
 use crate::pool;
@@ -138,7 +138,7 @@ impl Core {
                     known.insert(sub.url);
                     summary.added += 1;
                 }
-                Err(e) if feed::is_unreachable(&e) => summary.unreachable += 1,
+                Err(fetch::Error::Unreachable { .. }) => summary.unreachable += 1,
                 Err(_) => summary.failed += 1,
             }
         }
@@ -178,7 +178,7 @@ pub fn export_opml(store: &Store) -> Result<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::{self, Fetched, NewArticle};
+    use crate::feed::{Fetched, NewArticle};
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -251,7 +251,13 @@ mod tests {
 
         let err = core.add_source("http://127.0.0.1:9/feed.xml").unwrap_err();
 
-        assert!(feed::is_unreachable(&err), "{err:#}");
+        assert!(
+            matches!(
+                err.downcast_ref::<fetch::Error>(),
+                Some(fetch::Error::Unreachable { .. })
+            ),
+            "{err:#}"
+        );
         assert!(core.store().unwrap().sources().unwrap().is_empty());
     }
 
@@ -444,7 +450,13 @@ mod tests {
 
         let err = core.full_text("http://127.0.0.1:9/x").unwrap_err();
 
-        assert!(feed::is_unreachable(&err), "{err:#}");
+        assert!(
+            matches!(
+                err.downcast_ref::<fetch::Error>(),
+                Some(fetch::Error::Unreachable { .. })
+            ),
+            "{err:#}"
+        );
     }
 
     #[test]

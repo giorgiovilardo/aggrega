@@ -4,10 +4,9 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
 use url::Url;
 
-use crate::feed::{self, FeedJob, FeedRefresh, FetchResult, Subscription, Unreachable};
+use crate::feed::{self, FeedJob, Fetched, Subscription};
 use crate::pool;
 
 const USER_AGENT: &str = concat!(
@@ -18,6 +17,66 @@ const USER_AGENT: &str = concat!(
 const MAX_FEED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PAGE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Why a download, or subscribing to an address, failed.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// Nothing was typed.
+    #[error("no address given")]
+    EmptyAddress,
+    #[error("“{input}” isn't a valid address")]
+    InvalidAddress {
+        input: String,
+        #[source]
+        source: url::ParseError,
+    },
+    #[error("only http and https addresses are supported, not {scheme}")]
+    UnsupportedScheme { scheme: String },
+    /// The server couldn't be reached at all (no network, DNS failure, timeout…).
+    /// Unlike every other variant this says nothing about the source itself, so
+    /// it's never recorded as a broken feed or thumbnail.
+    #[error("couldn't reach {url}")]
+    Unreachable {
+        url: String,
+        #[source]
+        source: ureq::Error,
+    },
+    /// The request failed for another reason (TLS, a bad redirect…).
+    #[error("request to {url} failed")]
+    Request {
+        url: String,
+        #[source]
+        source: ureq::Error,
+    },
+    #[error("{url} answered HTTP {status}")]
+    Status { url: String, status: u16 },
+    /// The body couldn't be read, or was larger than allowed.
+    #[error("couldn't read the response from {url}")]
+    Body {
+        url: String,
+        #[source]
+        source: ureq::Error,
+    },
+    #[error("{url} isn't a valid feed")]
+    Feed {
+        url: String,
+        #[source]
+        source: feed::Error,
+    },
+    /// Neither the address nor any feed it links to is a feed.
+    #[error("couldn't find an RSS, Atom or JSON feed at {url}")]
+    NoFeed { url: String },
+}
+
+/// `Ok(None)` means the server answered "304 Not Modified".
+pub type FetchResult = Result<Option<Fetched>, Error>;
+
+/// One feed's outcome in a refresh, as `Store::apply_refresh` takes it.
+#[derive(Debug)]
+pub struct FeedRefresh {
+    pub id: i64,
+    pub result: FetchResult,
+}
 
 pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -41,7 +100,7 @@ fn get(
     accept: &str,
     headers: &[(&str, &str)],
     limit: u64,
-) -> Result<Response> {
+) -> Result<Response, Error> {
     let mut req = agent
         .get(url)
         .header("User-Agent", USER_AGENT)
@@ -49,19 +108,19 @@ fn get(
     for (k, v) in headers {
         req = req.header(*k, *v);
     }
-    let mut resp = req.call().map_err(|e| {
-        let msg = friendly_error(&e);
+    let mut resp = req.call().map_err(|source| {
+        let url = url.to_string();
         if matches!(
-            e,
+            source,
             ureq::Error::Io(_)
                 | ureq::Error::Timeout(_)
                 | ureq::Error::HostNotFound
                 | ureq::Error::ConnectionFailed
                 | ureq::Error::BodyStalled
         ) {
-            anyhow::Error::new(Unreachable(msg))
+            Error::Unreachable { url, source }
         } else {
-            anyhow!(msg)
+            Error::Request { url, source }
         }
     })?;
     let status = resp.status().as_u16();
@@ -80,7 +139,10 @@ fn get(
             .with_config()
             .limit(limit)
             .read_to_vec()
-            .context("failed to read response")?
+            .map_err(|source| Error::Body {
+                url: url.to_string(),
+                source,
+            })?
     };
     Ok(Response {
         status,
@@ -88,15 +150,6 @@ fn get(
         last_modified,
         body,
     })
-}
-
-fn friendly_error(e: &ureq::Error) -> String {
-    match e {
-        ureq::Error::Timeout(_) => "the server took too long to answer".into(),
-        ureq::Error::HostNotFound => "host not found — check the address".into(),
-        ureq::Error::Io(io) => format!("network error: {io}"),
-        other => other.to_string(),
-    }
 }
 
 const FEED_ACCEPT: &str = "application/rss+xml, application/atom+xml, application/feed+json, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.5";
@@ -114,12 +167,18 @@ pub fn fetch_feed(agent: &ureq::Agent, job: &FeedJob) -> FetchResult {
     match resp.status {
         304 => Ok(None),
         200..=299 => {
-            let mut fetched = feed::parse(&job.url, &resp.body)?;
+            let mut fetched = feed::parse(&job.url, &resp.body).map_err(|source| Error::Feed {
+                url: job.url.clone(),
+                source,
+            })?;
             fetched.etag = resp.etag;
             fetched.last_modified = resp.last_modified;
             Ok(Some(fetched))
         }
-        s => bail!("server answered HTTP {s}"),
+        status => Err(Error::Status {
+            url: job.url.clone(),
+            status,
+        }),
     }
 }
 
@@ -133,11 +192,14 @@ pub fn fetch_all(agent: &ureq::Agent, jobs: &[FeedJob]) -> Vec<FeedRefresh> {
 
 /// Turns whatever the user typed into a feed URL, discovering the feed
 /// from an HTML page if needed. Returns the final feed URL and its contents.
-pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription> {
+pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription, Error> {
     let url = normalize_url(input)?;
     let resp = get(agent, &url, FEED_ACCEPT, &[], MAX_FEED_BYTES)?;
     if !(200..300).contains(&resp.status) {
-        bail!("server answered HTTP {}", resp.status);
+        return Err(Error::Status {
+            url,
+            status: resp.status,
+        });
     }
     if let Ok(mut f) = feed::parse(&url, &resp.body) {
         f.etag = resp.etag;
@@ -147,7 +209,10 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription> {
 
     // Not a feed: look for <link rel="alternate"> tags, then common paths.
     let html = String::from_utf8_lossy(&resp.body);
-    let base = Url::parse(&url)?;
+    let base = Url::parse(&url).map_err(|source| Error::InvalidAddress {
+        input: url.clone(),
+        source,
+    })?;
     let mut candidates = feed::discover_links(&html, &base);
     for p in [
         "/feed",
@@ -179,29 +244,34 @@ pub fn subscribe(agent: &ureq::Agent, input: &str) -> Result<Subscription> {
             return Ok(Subscription { url: c, fetched: f });
         }
     }
-    bail!("couldn't find an RSS, Atom or JSON feed at that address")
+    Err(Error::NoFeed { url })
 }
 
 /// A typed address as a full http(s) URL, the form feeds are stored under.
-pub fn normalize_url(input: &str) -> Result<String> {
+pub fn normalize_url(input: &str) -> Result<String, Error> {
     let s = input.trim();
     if s.is_empty() {
-        bail!("please enter an address");
+        return Err(Error::EmptyAddress);
     }
-    let s = if s.contains("://") {
+    let full = if s.contains("://") {
         s.to_string()
     } else {
         format!("https://{s}")
     };
-    let u = Url::parse(&s).map_err(|_| anyhow!("that doesn't look like a valid address"))?;
+    let u = Url::parse(&full).map_err(|source| Error::InvalidAddress {
+        input: s.to_string(),
+        source,
+    })?;
     if !matches!(u.scheme(), "http" | "https") {
-        bail!("only http and https addresses are supported");
+        return Err(Error::UnsupportedScheme {
+            scheme: u.scheme().to_string(),
+        });
     }
     Ok(u.to_string())
 }
 
 /// Downloads an article's web page for the reader view.
-pub fn fetch_page(agent: &ureq::Agent, url: &str) -> Result<String> {
+pub fn fetch_page(agent: &ureq::Agent, url: &str) -> Result<String, Error> {
     let r = get(
         agent,
         url,
@@ -210,13 +280,16 @@ pub fn fetch_page(agent: &ureq::Agent, url: &str) -> Result<String> {
         MAX_PAGE_BYTES,
     )?;
     if !(200..300).contains(&r.status) {
-        bail!("the page answered HTTP {}", r.status);
+        return Err(Error::Status {
+            url: url.to_string(),
+            status: r.status,
+        });
     }
     Ok(String::from_utf8_lossy(&r.body).into_owned())
 }
 
 /// Downloads an image (thumbnail source).
-pub fn download_image(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
+pub fn download_image(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, Error> {
     let r = get(
         agent,
         url,
@@ -225,7 +298,10 @@ pub fn download_image(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
         MAX_IMAGE_BYTES,
     )?;
     if !(200..300).contains(&r.status) {
-        bail!("HTTP {}", r.status);
+        return Err(Error::Status {
+            url: url.to_string(),
+            status: r.status,
+        });
     }
     Ok(r.body)
 }
@@ -244,7 +320,7 @@ mod tests {
             last_modified: None,
         };
         let err = fetch_feed(&agent(), &job).unwrap_err();
-        assert!(feed::is_unreachable(&err), "{err:#}");
+        assert!(matches!(err, Error::Unreachable { .. }), "{err}");
     }
 
     #[test]
@@ -253,6 +329,14 @@ mod tests {
             normalize_url("example.com/feed").unwrap(),
             "https://example.com/feed"
         );
-        assert!(normalize_url("ftp://x.org").is_err());
+        assert!(matches!(normalize_url("  "), Err(Error::EmptyAddress)));
+        assert!(matches!(
+            normalize_url("ftp://x.org"),
+            Err(Error::UnsupportedScheme { scheme }) if scheme == "ftp"
+        ));
+        assert!(matches!(
+            normalize_url("https://exa mple.com"),
+            Err(Error::InvalidAddress { input, .. }) if input == "https://exa mple.com"
+        ));
     }
 }

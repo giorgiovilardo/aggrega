@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use image::imageops::FilterType;
 
-use crate::{feed, fetch, text};
+use crate::{fetch, text};
 
 /// Thumbnail size in physical pixels (2× the on-screen size for HiDPI).
 const W: u32 = 264;
@@ -38,13 +38,17 @@ pub fn load(agent: &ureq::Agent, dir: &Path, url: &str) -> Thumb {
     if failed.exists() {
         return Thumb::Broken;
     }
-    match fetch_and_shrink(agent, url) {
+    let shrunk = match fetch::download_image(agent, url) {
+        Ok(bytes) => shrink(&bytes),
+        // Offline: keep the placeholder and retry on a later reload.
+        Err(fetch::Error::Unreachable { .. }) => return Thumb::Unavailable,
+        Err(e) => Err(e.into()),
+    };
+    match shrunk {
         Ok(rgb) => {
             let _ = rgb.save_with_format(&jpg, image::ImageFormat::Jpeg);
             Thumb::Ready(rgb)
         }
-        // Offline: keep the placeholder and retry on a later reload.
-        Err(e) if feed::is_unreachable(&e) => Thumb::Unavailable,
         Err(_) => {
             let _ = std::fs::write(&failed, b"");
             Thumb::Broken
@@ -52,9 +56,8 @@ pub fn load(agent: &ureq::Agent, dir: &Path, url: &str) -> Thumb {
     }
 }
 
-fn fetch_and_shrink(agent: &ureq::Agent, url: &str) -> Result<image::RgbImage> {
-    let bytes = fetch::download_image(agent, url)?;
-    let img = image::load_from_memory(&bytes)?;
+fn shrink(bytes: &[u8]) -> Result<image::RgbImage> {
+    let img = image::load_from_memory(bytes)?;
     if img.width() < 48 || img.height() < 48 {
         bail!("image too small to be a thumbnail");
     }

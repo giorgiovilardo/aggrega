@@ -16,7 +16,7 @@ use slint::{
 };
 
 use crate::db::{Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
-use crate::feed;
+use crate::fetch;
 use crate::i18n::{self, Lang, tr, trn};
 use crate::ops::{self, AddedSource, Core, ImportSummary};
 use crate::profile::Paths;
@@ -879,7 +879,12 @@ impl App {
                 tr!("Couldn't find the story on its page. Open the original to read it.")
             }
             Ok(_) => String::new(),
-            Err(e) if feed::is_unreachable(&e) => {
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<fetch::Error>(),
+                    Some(fetch::Error::Unreachable { .. })
+                ) =>
+            {
                 tr!("You're offline, so this is the summary from the feed.")
             }
             Err(_) => {
@@ -1870,7 +1875,10 @@ mod tests {
         app.open_article(row_of(&app, "Story 0"));
         let id = ui.get_reader().id as i64;
 
-        let offline = anyhow::Error::new(feed::Unreachable("offline".into()));
+        let offline = anyhow::Error::new(fetch::Error::Unreachable {
+            url: "http://127.0.0.1:9/story/0".into(),
+            source: ureq::Error::HostNotFound,
+        });
         app.page_ready(id, Err(offline));
         assert!(!ui.get_reader_loading());
         assert!(ui.get_reader_note().contains("offline"));

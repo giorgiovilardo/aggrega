@@ -7,7 +7,8 @@ use anyhow::{Context, Result, bail};
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
-use crate::feed::{FeedJob, FeedRefresh, Fetched, Source, is_unreachable};
+use crate::feed::{FeedJob, Fetched, Source};
+use crate::fetch::{self, FeedRefresh};
 use crate::search;
 
 pub const SCHEMA_VERSION: i32 = 3;
@@ -317,7 +318,7 @@ impl Store {
                     )?;
                 }
                 // Connectivity problems aren't the source's fault: keep its state.
-                Err(e) if is_unreachable(&e) => summary.unreachable += 1,
+                Err(fetch::Error::Unreachable { .. }) => summary.unreachable += 1,
                 Err(e) => {
                     summary.failed += 1;
                     tx.execute(
@@ -731,7 +732,10 @@ mod tests {
 
         // Being offline neither marks the source as broken nor loses articles.
         let before = store.articles(ArticleFilter::default(), 10)?.len();
-        let offline = anyhow::Error::new(crate::feed::Unreachable("offline".into()));
+        let offline = fetch::Error::Unreachable {
+            url: "http://127.0.0.1:9/".into(),
+            source: ureq::Error::HostNotFound,
+        };
         let s = store.apply_refresh(vec![FeedRefresh {
             id,
             result: Err(offline),
