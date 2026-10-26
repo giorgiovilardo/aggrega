@@ -929,7 +929,9 @@ impl App {
         let agent = self.core.agent().clone();
         std::thread::spawn(move || {
             pool::par_for_each(&urls, 4, |url| {
-                let picture = thumbs::load_picture(&agent, url).map(|img| rgba_buffer(&img));
+                let picture = thumbs::load_picture(&agent, url)
+                    .ok()
+                    .map(|img| rgba_buffer(&img));
                 let url = url.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     with_app(|app| app.picture_ready(id, &url, picture))
