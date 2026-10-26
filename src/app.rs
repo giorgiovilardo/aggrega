@@ -15,7 +15,7 @@ use slint::{
     VecModel,
 };
 
-use crate::db::{Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
+use crate::db::{self, Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
 use crate::fetch;
 use crate::i18n::{self, Lang, tr, trn};
 use crate::ops::{self, AddedSource, Core, ImportSummary};
@@ -272,7 +272,8 @@ impl App {
     }
 
     /// `what` is already translated; the error itself stays as it came.
-    fn report(&self, what: String, err: anyhow::Error) {
+    fn report(&self, what: String, err: impl Into<anyhow::Error>) {
+        let err = err.into();
         eprintln!("aggrega: {what}: {err:#}");
         self.toast(format!("{what}: {err}"));
     }
@@ -386,7 +387,11 @@ impl App {
 
     /// Articles matching `text` in the view `filter` describes. Reads the
     /// vocabulary again first if it is stale; this search uses what is cached.
-    fn search_articles(&self, filter: ArticleFilter, text: &str) -> Result<Vec<Article>> {
+    fn search_articles(
+        &self,
+        filter: ArticleFilter,
+        text: &str,
+    ) -> Result<Vec<Article>, db::Error> {
         if self
             .terms_stamp
             .get()
@@ -422,7 +427,7 @@ impl App {
         });
     }
 
-    fn terms_ready(&self, version: i64, terms: Result<search::Terms>) {
+    fn terms_ready(&self, version: i64, terms: Result<search::Terms, db::Error>) {
         self.terms_loading.set(false);
         let terms = match terms {
             Ok(terms) => terms,

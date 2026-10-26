@@ -90,14 +90,14 @@ impl Core {
 
     /// A new connection to the profile's database.
     pub fn store(&self) -> Result<Store> {
-        Store::open(&self.paths.db)
+        Ok(Store::open(&self.paths.db)?)
     }
 
     /// Fetches every job and stores the results. Blocking, so meant for a
     /// worker thread. Doesn't touch `last_refresh`: the frontend records it.
     pub fn refresh(&self, jobs: &[FeedJob]) -> Result<RefreshSummary> {
         let results = fetch::fetch_all(&self.agent, jobs);
-        self.store()?.apply_refresh(results)
+        Ok(self.store()?.apply_refresh(results)?)
     }
 
     /// Subscribes to the feed `input` points at and stores it. Blocking, so
@@ -281,7 +281,10 @@ mod tests {
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].xml_url, url);
         let again = core.add_source(&url).unwrap_err();
-        assert_eq!(format!("{again:#}"), "you're already following this source");
+        assert!(matches!(
+            again.downcast_ref::<crate::db::Error>(),
+            Some(crate::db::Error::AlreadyFollowing { .. })
+        ));
     }
 
     #[test]

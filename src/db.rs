@@ -1,11 +1,10 @@
 //! Local persistence in a single SQLite file (WAL mode).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
 use rusqlite::backup::Backup;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, params};
 
 use crate::feed::{FeedJob, Fetched, Source};
 use crate::fetch::{self, FeedRefresh};
@@ -16,6 +15,32 @@ pub const SCHEMA_VERSION: i32 = 3;
 /// Settings that belong to this computer, kept when a sync pull replaces
 /// the database.
 const LOCAL_SETTINGS: [&str; 4] = ["theme", "refresh_interval", "language", "zoom"];
+
+/// Why a database operation failed.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// `add_feed` for a URL that's already subscribed.
+    #[error("already following {url}")]
+    AlreadyFollowing { url: String },
+    /// The database (this profile's, or a snapshot) has a newer schema than this build understands.
+    #[error(
+        "the database was made by a newer version of Aggrega (schema {found}, this one knows {SCHEMA_VERSION})"
+    )]
+    NewerSchema { found: i32 },
+    /// A snapshot that isn't an Aggrega database at all.
+    #[error("not an Aggrega database")]
+    NotAnAggregaDatabase,
+    /// SQLite's integrity check found problems in a snapshot; `report` is what it said.
+    #[error("the snapshot is damaged: {report}")]
+    Damaged { report: String },
+    /// SQLite couldn't read a snapshot because it's corrupt.
+    #[error("the snapshot is corrupt")]
+    Corrupt(#[source] rusqlite::Error),
+    #[error("{} isn't a valid UTF-8 path", path.display())]
+    NonUtf8Path { path: PathBuf },
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+}
 
 pub struct Store {
     conn: Connection,
@@ -91,7 +116,7 @@ fn now() -> i64 {
 }
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> Result<Self, Error> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.execute_batch(
@@ -104,12 +129,12 @@ impl Store {
         Ok(store)
     }
 
-    fn migrate(&self) -> Result<()> {
+    fn migrate(&self) -> Result<(), Error> {
         let version: i32 = self
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
-            bail!("database was created by a newer version of Aggrega");
+            return Err(Error::NewerSchema { found: version });
         }
         if version < 1 {
             self.conn.execute_batch(
@@ -191,7 +216,7 @@ impl Store {
 
     // ---- settings -------------------------------------------------------
 
-    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+    pub fn setting(&self, key: &str) -> Result<Option<String>, Error> {
         Ok(self
             .conn
             .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
@@ -200,7 +225,7 @@ impl Store {
             .optional()?)
     }
 
-    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), Error> {
         self.conn.execute(
             "INSERT INTO settings(key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -211,7 +236,7 @@ impl Store {
 
     // ---- feeds ----------------------------------------------------------
 
-    pub fn feeds(&self) -> Result<Vec<Feed>> {
+    pub fn feeds(&self) -> Result<Vec<Feed>, Error> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT f.id, f.title, f.last_error IS NOT NULL,
                     (SELECT COUNT(*) FROM articles a WHERE a.feed_id = f.id AND a.read = 0)
@@ -229,7 +254,7 @@ impl Store {
     }
 
     /// Every subscription with its URLs, by title (for OPML export and import).
-    pub fn sources(&self) -> Result<Vec<Source>> {
+    pub fn sources(&self) -> Result<Vec<Source>, Error> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT title, url, site_url FROM feeds ORDER BY title COLLATE NOCASE",
         )?;
@@ -243,7 +268,7 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub fn fetch_jobs(&self) -> Result<Vec<FeedJob>> {
+    pub fn fetch_jobs(&self) -> Result<Vec<FeedJob>, Error> {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT id, url, etag, last_modified FROM feeds")?;
@@ -259,15 +284,7 @@ impl Store {
     }
 
     /// Inserts a new subscription with its first batch of articles.
-    pub fn add_feed(&self, url: &str, fetched: &Fetched) -> Result<AddedFeed> {
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM feeds WHERE url = ?1)",
-            [url],
-            |r| r.get(0),
-        )?;
-        if exists {
-            bail!("you're already following this source");
-        }
+    pub fn add_feed(&self, url: &str, fetched: &Fetched) -> Result<AddedFeed, Error> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO feeds(url, title, site_url, etag, last_modified, last_fetched, added_at)
@@ -280,20 +297,29 @@ impl Store {
                 fetched.last_modified,
                 now()
             ],
-        )?;
+        )
+        .map_err(|e| match e {
+            // The UNIQUE constraint on url also holds against a concurrent add.
+            rusqlite::Error::SqliteFailure(f, _)
+                if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                Error::AlreadyFollowing { url: url.into() }
+            }
+            e => Error::Sqlite(e),
+        })?;
         let id = tx.last_insert_rowid();
         let n = insert_articles(&tx, id, fetched)?;
         tx.commit()?;
         Ok(AddedFeed { id, articles: n })
     }
 
-    pub fn remove_feed(&self, id: i64) -> Result<()> {
+    pub fn remove_feed(&self, id: i64) -> Result<(), Error> {
         self.conn.execute("DELETE FROM feeds WHERE id = ?1", [id])?;
         Ok(())
     }
 
     /// Stores the results of a refresh in a single transaction.
-    pub fn apply_refresh(&self, results: Vec<FeedRefresh>) -> Result<RefreshSummary> {
+    pub fn apply_refresh(&self, results: Vec<FeedRefresh>) -> Result<RefreshSummary, Error> {
         let mut summary = RefreshSummary {
             total: results.len(),
             ..Default::default()
@@ -340,7 +366,7 @@ impl Store {
     // ---- articles -------------------------------------------------------
 
     /// Most recent articles, optionally restricted to one feed and/or unread ones.
-    pub fn articles(&self, filter: ArticleFilter, limit: usize) -> Result<Vec<Article>> {
+    pub fn articles(&self, filter: ArticleFilter, limit: usize) -> Result<Vec<Article>, Error> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT a.id, a.title, a.link, a.snippet, a.image_url, a.published, a.read, f.title
              FROM articles a JOIN feeds f ON f.id = a.feed_id
@@ -363,7 +389,7 @@ impl Store {
         filter: ArticleFilter,
         query: &search::Query,
         limit: usize,
-    ) -> Result<Vec<Article>> {
+    ) -> Result<Vec<Article>, Error> {
         let mut found = Vec::new();
         for (tier, expr) in query.tiers().iter().enumerate() {
             if found.len() >= limit {
@@ -395,7 +421,7 @@ impl Store {
     }
 
     /// Every distinct word in the search index, folded as the index folds it.
-    pub fn search_terms(&self) -> Result<Vec<String>> {
+    pub fn search_terms(&self) -> Result<Vec<String>, Error> {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT term FROM articles_fts_vocab")?;
@@ -406,13 +432,13 @@ impl Store {
 
     /// Changes whenever another connection writes to the database, so a
     /// reader can tell that its cached data has gone stale.
-    pub fn data_version(&self) -> Result<i64> {
+    pub fn data_version(&self) -> Result<i64, Error> {
         Ok(self
             .conn
             .query_row("PRAGMA data_version", [], |r| r.get(0))?)
     }
 
-    pub fn reader_article(&self, id: i64) -> Result<Option<ReaderArticle>> {
+    pub fn reader_article(&self, id: i64) -> Result<Option<ReaderArticle>, Error> {
         Ok(self
             .conn
             .query_row(
@@ -435,7 +461,7 @@ impl Store {
     }
 
     /// Saves reader content fetched from the article's web page.
-    pub fn set_body(&self, article: i64, body: &str) -> Result<()> {
+    pub fn set_body(&self, article: i64, body: &str) -> Result<(), Error> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "UPDATE articles SET body = ?2 WHERE id = ?1",
@@ -451,7 +477,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn set_read(&self, article: i64, read: bool) -> Result<()> {
+    pub fn set_read(&self, article: i64, read: bool) -> Result<(), Error> {
         self.conn.execute(
             "UPDATE articles SET read = ?2 WHERE id = ?1",
             params![article, read],
@@ -459,7 +485,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn mark_all_read(&self, feed: Option<i64>) -> Result<usize> {
+    pub fn mark_all_read(&self, feed: Option<i64>) -> Result<usize, Error> {
         Ok(self.conn.execute(
             "UPDATE articles SET read = 1 WHERE read = 0 AND (?1 IS NULL OR feed_id = ?1)",
             params![feed],
@@ -468,7 +494,7 @@ impl Store {
 
     // ---- sync -----------------------------------------------------------
 
-    pub fn stats(&self) -> Result<Stats> {
+    pub fn stats(&self) -> Result<Stats, Error> {
         Ok(self.conn.query_row(
             "SELECT (SELECT COUNT(*) FROM feeds), COUNT(*), COALESCE(SUM(read = 0), 0)
              FROM articles",
@@ -485,8 +511,10 @@ impl Store {
 
     /// Writes a consistent, compacted copy of the database to `path`, which
     /// must not exist yet. Safe while other connections write.
-    pub fn snapshot_to(&self, path: &Path) -> Result<()> {
-        let path = path.to_str().context("snapshot path isn't valid UTF-8")?;
+    pub fn snapshot_to(&self, path: &Path) -> Result<(), Error> {
+        let path = path.to_str().ok_or_else(|| Error::NonUtf8Path {
+            path: path.to_path_buf(),
+        })?;
         self.conn.execute("VACUUM INTO ?1", [path])?;
         Ok(())
     }
@@ -495,17 +523,18 @@ impl Store {
     /// (from `snapshot_to`, possibly on another computer), keeping only this
     /// computer's `LOCAL_SETTINGS`. Other connections see the new contents
     /// right away.
-    pub fn replace_with(&mut self, path: &Path) -> Result<()> {
-        let src = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    pub fn replace_with(&mut self, path: &Path) -> Result<(), Error> {
+        let src = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(snapshot_error)?;
         let check: String = src
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
-            .context("not an Aggrega database")?;
+            .map_err(snapshot_error)?;
         if check != "ok" {
-            bail!("the received database is damaged ({check})");
+            return Err(Error::Damaged { report: check });
         }
         let version: i32 = src.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
-            bail!("it was created by a newer version of Aggrega; update this one first");
+            return Err(Error::NewerSchema { found: version });
         }
         let tables: i64 = src.query_row(
             "SELECT COUNT(*) FROM sqlite_master
@@ -514,13 +543,13 @@ impl Store {
             |r| r.get(0),
         )?;
         if version < 1 || tables != 3 {
-            bail!("not an Aggrega database");
+            return Err(Error::NotAnAggregaDatabase);
         }
 
         let local = LOCAL_SETTINGS
             .iter()
             .map(|key| Ok((*key, self.setting(key)?)))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
         // One step copies every page under a single lock, so readers never
         // see a half-replaced database.
         Backup::new(&src, &mut self.conn)?.step(-1)?;
@@ -547,7 +576,7 @@ pub struct Stats {
     pub unread: i64,
 }
 
-fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result<usize> {
+fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result<usize, Error> {
     let mut stmt = conn.prepare_cached(
         "INSERT INTO articles(feed_id, guid, title, link, snippet, image_url, published, fetched_at, body)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -583,8 +612,23 @@ fn insert_articles(conn: &Connection, feed_id: i64, fetched: &Fetched) -> Result
     Ok(n)
 }
 
+/// Classifies an error from opening or checking a snapshot file.
+fn snapshot_error(e: rusqlite::Error) -> Error {
+    match e.sqlite_error_code() {
+        Some(ErrorCode::NotADatabase) => Error::NotAnAggregaDatabase,
+        Some(ErrorCode::DatabaseCorrupt) => Error::Corrupt(e),
+        _ => Error::Sqlite(e),
+    }
+}
+
 /// Adds one article to the search index. `body` is already plain text.
-fn index_article(conn: &Connection, id: i64, title: &str, snippet: &str, body: &str) -> Result<()> {
+fn index_article(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    snippet: &str,
+    body: &str,
+) -> Result<(), Error> {
     conn.prepare_cached(
         "INSERT INTO articles_fts(rowid, title, snippet, body) VALUES (?1, ?2, ?3, ?4)",
     )?
@@ -641,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn reader_body_is_stored_and_updatable() -> Result<()> {
+    fn reader_body_is_stored_and_updatable() -> Result<(), Error> {
         let dir = temp_dir("reader");
         let store = Store::open(&dir.path().join("t.db"))?;
         let feed = store.add_feed("https://x.org/rss", &sample(2))?.id;
@@ -668,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_v1_databases() -> Result<()> {
+    fn migrates_v1_databases() -> Result<(), Error> {
         let dir = temp_dir("migrate");
         let path = dir.path().join("t.db");
         {
@@ -703,13 +747,18 @@ mod tests {
     }
 
     #[test]
-    fn add_list_read_remove() -> Result<()> {
+    fn add_list_read_remove() -> Result<(), Error> {
         let dir = temp_dir("test");
         let store = Store::open(&dir.path().join("t.db"))?;
         let added = store.add_feed("https://x.org/rss", &sample(3))?;
         let id = added.id;
         assert_eq!(added.articles, 3);
-        assert!(store.add_feed("https://x.org/rss", &sample(1)).is_err());
+        let before = store.stats()?;
+        match store.add_feed("https://x.org/rss", &sample(1)) {
+            Err(Error::AlreadyFollowing { url }) => assert_eq!(url, "https://x.org/rss"),
+            other => panic!("expected AlreadyFollowing, got {other:?}"),
+        }
+        assert_eq!(store.stats()?, before, "nothing else changed");
 
         let all = store.articles(ArticleFilter::default(), 10)?;
         assert_eq!(all.len(), 3);
@@ -750,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn replaces_everything_from_a_snapshot() -> Result<()> {
+    fn replaces_everything_from_a_snapshot() -> Result<(), Error> {
         let dir = temp_dir("replace");
         let theirs = Store::open(&dir.path().join("theirs.db"))?;
         let feed = theirs.add_feed("https://x.org/rss", &sample(3))?.id;
@@ -804,34 +853,82 @@ mod tests {
     }
 
     #[test]
-    fn refuses_snapshots_it_cannot_use() -> Result<()> {
+    fn refuses_snapshots_it_cannot_use() -> Result<(), Error> {
         let dir = temp_dir("refuse");
         let mut ours = Store::open(&dir.path().join("ours.db"))?;
         ours.add_feed("https://y.org/feed", &sample(2))?;
         let before = ours.stats()?;
 
         let junk = dir.path().join("junk.db");
-        std::fs::write(&junk, b"definitely not sqlite, just some bytes here")?;
-        assert!(ours.replace_with(&junk).is_err());
+        std::fs::write(&junk, b"definitely not sqlite, just some bytes here").unwrap();
+        assert!(matches!(
+            ours.replace_with(&junk),
+            Err(Error::NotAnAggregaDatabase)
+        ));
 
         let newer = dir.path().join("newer.db");
         Store::open(&newer)?
             .conn
             .execute_batch("PRAGMA user_version = 99")?;
-        let err = ours.replace_with(&newer).unwrap_err().to_string();
-        assert!(err.contains("newer version"), "{err}");
+        assert!(matches!(
+            ours.replace_with(&newer),
+            Err(Error::NewerSchema { found: 99 })
+        ));
 
         let other = dir.path().join("other.db");
         Connection::open(&other)?
             .execute_batch("CREATE TABLE notes (x); PRAGMA user_version = 1;")?;
-        assert!(ours.replace_with(&other).is_err());
+        assert!(matches!(
+            ours.replace_with(&other),
+            Err(Error::NotAnAggregaDatabase)
+        ));
 
         assert_eq!(ours.stats()?, before, "nothing was touched");
         Ok(())
     }
 
     #[test]
-    fn lists_sources_for_export() -> Result<()> {
+    fn refuses_damaged_snapshots() -> Result<(), Error> {
+        let dir = temp_dir("damaged");
+        let theirs = Store::open(&dir.path().join("theirs.db"))?;
+        theirs.add_feed("https://x.org/rss", &sample(300))?;
+        let snapshot = dir.path().join("snapshot.db");
+        theirs.snapshot_to(&snapshot)?;
+        let mut ours = Store::open(&dir.path().join("ours.db"))?;
+
+        // Page 2 overwritten: the integrity check reports it.
+        let mut bytes = std::fs::read(&snapshot).unwrap();
+        bytes[4096..8192].fill(0xff);
+        let garbled = dir.path().join("garbled.db");
+        std::fs::write(&garbled, &bytes).unwrap();
+        assert!(matches!(
+            ours.replace_with(&garbled),
+            Err(Error::Damaged { .. })
+        ));
+
+        // Cut in half: SQLite finds pages past the end of the file.
+        let mut bytes = std::fs::read(&snapshot).unwrap();
+        bytes.truncate(bytes.len() / 2);
+        let cut = dir.path().join("cut.db");
+        std::fs::write(&cut, &bytes).unwrap();
+        assert!(matches!(ours.replace_with(&cut), Err(Error::Corrupt(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_to_open_a_newer_database() -> Result<(), Error> {
+        let dir = temp_dir("newer-open");
+        let path = dir.path().join("t.db");
+        Connection::open(&path)?.execute_batch("PRAGMA user_version = 99")?;
+        assert!(matches!(
+            Store::open(&path),
+            Err(Error::NewerSchema { found: 99 })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn lists_sources_for_export() -> Result<(), Error> {
         let dir = temp_dir("sources");
         let store = Store::open(&dir.path().join("t.db"))?;
         let mut zine = sample(0);
@@ -881,7 +978,7 @@ mod tests {
     }
 
     /// A database as release 2 created it: the v1 tables plus `articles.body`.
-    fn write_v2_database(path: &std::path::Path) -> Result<()> {
+    fn write_v2_database(path: &std::path::Path) -> Result<(), Error> {
         let conn = Connection::open(path)?;
         conn.execute_batch(
             "CREATE TABLE feeds (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE,
@@ -922,7 +1019,7 @@ mod tests {
         q: &str,
         filter: ArticleFilter,
         limit: usize,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<String>, Error> {
         let terms = search::Terms::new(store.search_terms()?);
         let query = search::compile(q, Some(&terms)).expect("query has tokens");
         Ok(store
@@ -932,13 +1029,13 @@ mod tests {
             .collect())
     }
 
-    fn found(store: &Store, q: &str) -> Result<Vec<String>> {
+    fn found(store: &Store, q: &str) -> Result<Vec<String>, Error> {
         found_in(store, q, ArticleFilter::default(), 50)
     }
 
     /// Every `(term, doc, cnt)` row of the vocabulary table. Not asserted on:
     /// it shows what the index keeps after deletes.
-    fn vocab(store: &Store) -> Result<Vec<(String, i64, i64)>> {
+    fn vocab(store: &Store) -> Result<Vec<(String, i64, i64)>, Error> {
         Ok(store
             .conn
             .prepare("SELECT term, doc, cnt FROM articles_fts_vocab")?
@@ -947,7 +1044,7 @@ mod tests {
     }
 
     /// Rows of the search index that contain `term`.
-    fn index_docs(store: &Store, term: &str) -> Result<i64> {
+    fn index_docs(store: &Store, term: &str) -> Result<i64, Error> {
         Ok(store
             .conn
             .query_row(
@@ -960,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn migrating_v2_builds_a_search_index() -> Result<()> {
+    fn migrating_v2_builds_a_search_index() -> Result<(), Error> {
         let dir = temp_dir("migrate-v2");
         let path = dir.path().join("t.db");
         write_v2_database(&path)?;
@@ -981,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn replacing_with_a_v2_snapshot_indexes_it() -> Result<()> {
+    fn replacing_with_a_v2_snapshot_indexes_it() -> Result<(), Error> {
         let dir = temp_dir("replace-v2");
         let snapshot = dir.path().join("v2.db");
         write_v2_database(&snapshot)?;
@@ -995,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn new_articles_are_indexed_once() -> Result<()> {
+    fn new_articles_are_indexed_once() -> Result<(), Error> {
         let dir = temp_dir("index-once");
         let store = Store::open(&dir.path().join("t.db"))?;
         let feed = store.add_feed("https://x.org/rss", &sample(3))?.id;
@@ -1019,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn set_body_reindexes_the_article() -> Result<()> {
+    fn set_body_reindexes_the_article() -> Result<(), Error> {
         let dir = temp_dir("set-body");
         let store = Store::open(&dir.path().join("t.db"))?;
         let feed = store.add_feed("https://x.org/rss", &sample(2))?.id;
@@ -1046,7 +1143,7 @@ mod tests {
     }
 
     #[test]
-    fn removing_feeds_and_pruning_drop_index_rows() -> Result<()> {
+    fn removing_feeds_and_pruning_drop_index_rows() -> Result<(), Error> {
         let dir = temp_dir("index-delete");
         let store = Store::open(&dir.path().join("t.db"))?;
         let keep = store.add_feed("https://x.org/rss", &titled("Keep", &["Lighthouse keeper"]))?;
@@ -1075,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_matches_come_before_typos_and_newest_first_within_a_tier() -> Result<()> {
+    fn exact_matches_come_before_typos_and_newest_first_within_a_tier() -> Result<(), Error> {
         let dir = temp_dir("tiers");
         let store = Store::open(&dir.path().join("t.db"))?;
         store.add_feed(
@@ -1124,7 +1221,7 @@ mod tests {
     }
 
     #[test]
-    fn typo_tiers_only_run_when_exact_matches_are_scarce() -> Result<()> {
+    fn typo_tiers_only_run_when_exact_matches_are_scarce() -> Result<(), Error> {
         let dir = temp_dir("fuzzy-below");
         let store = Store::open(&dir.path().join("t.db"))?;
         let exact: Vec<String> = (0..10).map(|i| format!("Kernel {i}")).collect();
@@ -1146,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn folded_spelling_matches_in_the_exact_tier() -> Result<()> {
+    fn folded_spelling_matches_in_the_exact_tier() -> Result<(), Error> {
         let dir = temp_dir("folded-prefix");
         let store = Store::open(&dir.path().join("t.db"))?;
         store.add_feed(
@@ -1162,7 +1259,7 @@ mod tests {
     }
 
     #[test]
-    fn data_version_changes_when_another_connection_writes() -> Result<()> {
+    fn data_version_changes_when_another_connection_writes() -> Result<(), Error> {
         let dir = temp_dir("data-version");
         let path = dir.path().join("t.db");
         let store = Store::open(&path)?;
@@ -1176,7 +1273,7 @@ mod tests {
     /// Runs every corpus case through the UI's search path and prints a score
     /// table. The exact, diacritics, prefix and cyrillic kinds must all pass.
     #[test]
-    fn corpus_search_scores() -> Result<()> {
+    fn corpus_search_scores() -> Result<(), Error> {
         let dir = temp_dir("corpus");
         let store = Store::open(&dir.path().join("t.db"))?;
         let docs = corpus::docs();

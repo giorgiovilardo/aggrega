@@ -170,12 +170,15 @@ fn answer(stream: TcpStream, db: &Path, name: &str) -> Result<()> {
         return Ok(());
     }
     let reply = match parts.next() {
-        Some("INFO") => Store::open(db).and_then(|s| s.stats()).map(|s| {
-            format!(
-                "OK {SCHEMA_VERSION} {} {} {} {name}",
-                s.feeds, s.articles, s.unread
-            )
-        }),
+        Some("INFO") => Store::open(db)
+            .and_then(|s| s.stats())
+            .map(|s| {
+                format!(
+                    "OK {SCHEMA_VERSION} {} {} {} {name}",
+                    s.feeds, s.articles, s.unread
+                )
+            })
+            .map_err(anyhow::Error::from),
         Some("PULL") => return send_snapshot(out, db),
         _ => Err(anyhow!("unknown request")),
     };
@@ -386,7 +389,7 @@ pub fn pull(addr: SocketAddr, db: &Path) -> Result<Stats> {
         drop(file);
         let mut store = Store::open(db)?;
         store.replace_with(&path)?;
-        store.stats()
+        Ok(store.stats()?)
     })();
     let _ = std::fs::remove_file(&path);
     result
