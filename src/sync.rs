@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::db::{self, SCHEMA_VERSION, Stats, Store};
+use crate::error::chain;
 
 /// Where beacons are sent and heard.
 pub const BEACON_PORT: u16 = 47811;
@@ -141,18 +142,6 @@ enum ServeError {
     Io(#[from] io::Error),
     #[error(transparent)]
     Db(#[from] db::Error),
-}
-
-/// `err` and its sources, joined by ": ".
-fn chain(err: &dyn std::error::Error) -> String {
-    let mut text = err.to_string();
-    let mut source = err.source();
-    while let Some(e) = source {
-        text += ": ";
-        text += &e.to_string();
-        source = e.source();
-    }
-    text
 }
 
 /// Listens on `addr` (or any free port if it's taken) and answers each

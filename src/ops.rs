@@ -2,9 +2,8 @@
 
 use std::collections::HashSet;
 
-use anyhow::Result;
-
-use crate::db::{ReaderArticle, RefreshSummary, Store};
+use crate::db::{self, ReaderArticle, RefreshSummary, Store};
+use crate::error;
 use crate::feed::{FeedJob, Source};
 use crate::fetch;
 use crate::opml;
@@ -89,20 +88,20 @@ impl Core {
     }
 
     /// A new connection to the profile's database.
-    pub fn store(&self) -> Result<Store> {
-        Ok(Store::open(&self.paths.db)?)
+    pub fn store(&self) -> Result<Store, db::Error> {
+        Store::open(&self.paths.db)
     }
 
     /// Fetches every job and stores the results. Blocking, so meant for a
     /// worker thread. Doesn't touch `last_refresh`: the frontend records it.
-    pub fn refresh(&self, jobs: &[FeedJob]) -> Result<RefreshSummary> {
+    pub fn refresh(&self, jobs: &[FeedJob]) -> Result<RefreshSummary, db::Error> {
         let results = fetch::fetch_all(&self.agent, jobs);
-        Ok(self.store()?.apply_refresh(results)?)
+        self.store()?.apply_refresh(results)
     }
 
     /// Subscribes to the feed `input` points at and stores it. Blocking, so
     /// meant for a worker thread.
-    pub fn add_source(&self, input: &str) -> Result<AddedSource> {
+    pub fn add_source(&self, input: &str) -> Result<AddedSource, error::Error> {
         let sub = fetch::subscribe(&self.agent, input)?;
         let added = self.store()?.add_feed(&sub.url, &sub.fetched)?;
         Ok(AddedSource {
@@ -114,7 +113,7 @@ impl Core {
 
     /// Downloads the web page at `link` and extracts its article text. Blocking,
     /// so meant for a worker thread. Doesn't save anything.
-    pub fn full_text(&self, link: &str) -> Result<Vec<Block>> {
+    pub fn full_text(&self, link: &str) -> Result<Vec<Block>, fetch::Error> {
         let (base, page) = fetch::fetch_page(&self.agent, link)?;
         Ok(reader::extract_article(&page, &base))
     }
@@ -122,7 +121,7 @@ impl Core {
     /// Subscribes to the planned sources in parallel (with feed discovery,
     /// like the Add dialog), then stores each one that works, with its first
     /// articles. Blocking, so meant for a worker thread.
-    pub fn import(&self, plan: ImportPlan) -> Result<ImportSummary> {
+    pub fn import(&self, plan: ImportPlan) -> Result<ImportSummary, db::Error> {
         let agent = &self.agent;
         let results = pool::par_map(&plan.fresh, 8, |s| fetch::subscribe(agent, &s.xml_url));
         let store = self.store()?;
@@ -132,11 +131,15 @@ impl Core {
         for result in results {
             match result {
                 Ok(sub) if known.contains(&sub.url) => summary.skipped += 1,
-                Ok(sub) => {
-                    store.add_feed(&sub.url, &sub.fetched)?;
-                    known.insert(sub.url);
-                    summary.added += 1;
-                }
+                Ok(sub) => match store.add_feed(&sub.url, &sub.fetched) {
+                    Ok(_) => {
+                        known.insert(sub.url);
+                        summary.added += 1;
+                    }
+                    // Added from the Add dialog while this import ran.
+                    Err(db::Error::AlreadyFollowing { .. }) => summary.skipped += 1,
+                    Err(e) => return Err(e),
+                },
                 Err(fetch::Error::Unreachable { .. }) => summary.unreachable += 1,
                 Err(_) => summary.failed += 1,
             }
@@ -148,7 +151,7 @@ impl Core {
 
 /// Parses an OPML document and sorts its sources into those already followed
 /// and those that are new. Makes no network calls.
-pub fn plan_import(store: &Store, opml_text: &str) -> Result<ImportPlan> {
+pub fn plan_import(store: &Store, opml_text: &str) -> Result<ImportPlan, error::Error> {
     let sources = opml::parse(opml_text)?;
     let known: HashSet<String> = store.sources()?.into_iter().map(|s| s.xml_url).collect();
     let total = sources.len();
@@ -169,7 +172,7 @@ pub fn plan_import(store: &Store, opml_text: &str) -> Result<ImportPlan> {
 }
 
 /// Every source in `store` as an OPML document, with how many it lists.
-pub fn export_opml(store: &Store) -> Result<(String, usize)> {
+pub fn export_opml(store: &Store) -> Result<(String, usize), db::Error> {
     let sources = store.sources()?;
     let created = chrono::Utc::now().to_rfc2822();
     Ok((opml::write(&sources, &created), sources.len()))
@@ -250,11 +253,8 @@ mod tests {
         let err = core.add_source("http://127.0.0.1:9/feed.xml").unwrap_err();
 
         assert!(
-            matches!(
-                err.downcast_ref::<fetch::Error>(),
-                Some(fetch::Error::Unreachable { .. })
-            ),
-            "{err:#}"
+            matches!(err, error::Error::Fetch(fetch::Error::Unreachable { .. })),
+            "{err}"
         );
         assert!(core.store().unwrap().sources().unwrap().is_empty());
     }
@@ -282,8 +282,8 @@ mod tests {
         assert_eq!(sources[0].xml_url, url);
         let again = core.add_source(&url).unwrap_err();
         assert!(matches!(
-            again.downcast_ref::<crate::db::Error>(),
-            Some(crate::db::Error::AlreadyFollowing { .. })
+            again,
+            error::Error::Db(db::Error::AlreadyFollowing { .. })
         ));
     }
 
@@ -438,13 +438,7 @@ mod tests {
 
         let err = core.full_text("http://127.0.0.1:9/x").unwrap_err();
 
-        assert!(
-            matches!(
-                err.downcast_ref::<fetch::Error>(),
-                Some(fetch::Error::Unreachable { .. })
-            ),
-            "{err:#}"
-        );
+        assert!(matches!(err, fetch::Error::Unreachable { .. }), "{err}");
     }
 
     #[test]

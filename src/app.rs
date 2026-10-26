@@ -16,6 +16,7 @@ use slint::{
 };
 
 use crate::db::{self, Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, Stats, Store};
+use crate::error::{self, chain};
 use crate::fetch;
 use crate::i18n::{self, Lang, tr, trn};
 use crate::ops::{self, AddedSource, Core, ImportSummary};
@@ -272,9 +273,8 @@ impl App {
     }
 
     /// `what` is already translated; the error itself stays as it came.
-    fn report(&self, what: String, err: impl Into<anyhow::Error>) {
-        let err = err.into();
-        eprintln!("aggrega: {what}: {err:#}");
+    fn report(&self, what: String, err: &dyn std::error::Error) {
+        eprintln!("aggrega: {what}: {}", chain(err));
         self.toast(format!("{what}: {err}"));
     }
 
@@ -288,7 +288,7 @@ impl App {
     pub fn reload_feeds(&self) {
         let feeds = match self.store.feeds() {
             Ok(f) => f,
-            Err(e) => return self.report(tr!("Couldn't load sources"), e),
+            Err(e) => return self.report(tr!("Couldn't load sources"), &e),
         };
         let ui = self.ui();
         let mut selected = ui.get_selected_feed();
@@ -336,7 +336,7 @@ impl App {
         };
         let rows = match rows {
             Ok(r) => r,
-            Err(e) => return self.report(tr!("Couldn't load articles"), e),
+            Err(e) => return self.report(tr!("Couldn't load articles"), &e),
         };
         let now = now();
         let mut wanted = Vec::new();
@@ -432,7 +432,10 @@ impl App {
         let terms = match terms {
             Ok(terms) => terms,
             Err(e) => {
-                eprintln!("aggrega: couldn't read the search vocabulary: {e:#}");
+                eprintln!(
+                    "aggrega: couldn't read the search vocabulary: {}",
+                    chain(&e)
+                );
                 return;
             }
         };
@@ -590,7 +593,7 @@ impl App {
         let jobs = match self.store.fetch_jobs() {
             Ok(j) if !j.is_empty() => j,
             Ok(_) => return,
-            Err(e) => return self.report(tr!("Couldn't start refresh"), e),
+            Err(e) => return self.report(tr!("Couldn't start refresh"), &e),
         };
         self.background.set(background);
         self.set_refreshing(true);
@@ -608,7 +611,7 @@ impl App {
         self.update_status();
     }
 
-    fn refresh_done(&self, summary: Result<RefreshSummary>) {
+    fn refresh_done(&self, summary: Result<RefreshSummary, db::Error>) {
         let offline = matches!(&summary, Ok(s) if s.offline());
         self.offline.set(offline);
         // Saved stories stay available offline; just don't pretend we updated.
@@ -646,7 +649,7 @@ impl App {
                 }
                 self.toast(msg);
             }
-            Err(e) => self.toast(tr!("Refresh failed: {}", format!("{e:#}"))),
+            Err(e) => self.toast(tr!("Refresh failed: {}", chain(&e))),
         }
     }
 
@@ -708,7 +711,7 @@ impl App {
             // Not in the list any more (say, a refresh reloaded it).
             None => match self.store.set_read(id, true) {
                 Ok(()) => self.reload_feeds(),
-                Err(e) => self.report(tr!("Couldn't save read state"), e),
+                Err(e) => self.report(tr!("Couldn't save read state"), &e),
             },
         }
         let pos = self.reader_pos.get();
@@ -731,7 +734,7 @@ impl App {
             Ok(Some(a)) => a,
             Ok(None) => return false,
             Err(e) => {
-                self.report(tr!("Couldn't open the article"), e);
+                self.report(tr!("Couldn't open the article"), &e);
                 return false;
             }
         };
@@ -856,7 +859,7 @@ impl App {
         }
     }
 
-    fn page_ready(&self, id: i64, result: Result<Vec<Block>>) {
+    fn page_ready(&self, id: i64, result: Result<Vec<Block>, fetch::Error>) {
         self.pages_pending.borrow_mut().remove(&id);
         let current = self.reader_id.get() == Some(id);
         let shown = if current {
@@ -869,7 +872,7 @@ impl App {
                 // Keep it, so the article opens instantly (and offline) next time.
                 self.terms_changed();
                 if let Err(e) = self.store.set_body(id, &reader::encode(&page)) {
-                    eprintln!("aggrega: couldn't save article text: {e:#}");
+                    eprintln!("aggrega: couldn't save article text: {}", chain(&e));
                 }
                 if current {
                     let title = self.ui().get_reader().title;
@@ -884,12 +887,7 @@ impl App {
                 tr!("Couldn't find the story on its page. Open the original to read it.")
             }
             Ok(_) => String::new(),
-            Err(e)
-                if matches!(
-                    e.downcast_ref::<fetch::Error>(),
-                    Some(fetch::Error::Unreachable { .. })
-                ) =>
-            {
+            Err(fetch::Error::Unreachable { .. }) => {
                 tr!("You're offline, so this is the summary from the feed.")
             }
             Err(_) => {
@@ -1041,7 +1039,7 @@ impl App {
             Some(row) => self.set_read(row, read),
             None => {
                 if let Err(e) = self.store.set_read(id, read) {
-                    return self.report(tr!("Couldn't save read state"), e);
+                    return self.report(tr!("Couldn't save read state"), &e);
                 }
                 // Marked unread again after it left the Unread list: bring it back.
                 self.reload_all();
@@ -1062,7 +1060,7 @@ impl App {
             return;
         };
         if let Err(e) = self.store.set_read(item.id as i64, read) {
-            return self.report(tr!("Couldn't save read state"), e);
+            return self.report(tr!("Couldn't save read state"), &e);
         }
         item.read = read;
         // In the Unread view a freshly read story animates out of the list.
@@ -1121,7 +1119,7 @@ impl App {
                     "Marked {n} articles as read"
                 ));
             }
-            Err(e) => self.report(tr!("Couldn't mark as read"), e),
+            Err(e) => self.report(tr!("Couldn't mark as read"), &e),
         }
     }
 
@@ -1139,7 +1137,7 @@ impl App {
         });
     }
 
-    fn add_done(&self, result: Result<AddedSource>) {
+    fn add_done(&self, result: Result<AddedSource, error::Error>) {
         let ui = self.ui();
         ui.set_adding(false);
         match result {
@@ -1156,7 +1154,7 @@ impl App {
                 ));
             }
             Err(e) => {
-                let mut e = format!("{e:#}");
+                let mut e = chain(&e);
                 if let Some(first) = e.get_mut(0..1) {
                     first.make_ascii_uppercase();
                 }
@@ -1174,7 +1172,7 @@ impl App {
             .unwrap_or_default();
         self.terms_changed();
         if let Err(e) = self.store.remove_feed(id as i64) {
-            return self.report(tr!("Couldn't remove source"), e);
+            return self.report(tr!("Couldn't remove source"), &e);
         }
         self.reload_all();
         self.toast(tr!("Removed {}", title));
@@ -1204,11 +1202,11 @@ impl App {
             .with_context(|| format!("couldn't read {}", path.display()))
         {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(e) => return self.report(tr!("Couldn't import"), e),
+            Err(e) => return self.report(tr!("Couldn't import"), e.as_ref()),
         };
         let plan = match ops::plan_import(&self.store, &text) {
             Ok(p) => p,
-            Err(e) => return self.report(tr!("Couldn't import"), e),
+            Err(e) => return self.report(tr!("Couldn't import"), &e),
         };
         if plan.fresh.is_empty() {
             return self.toast(match plan.total {
@@ -1234,12 +1232,12 @@ impl App {
         });
     }
 
-    fn import_done(&self, summary: Result<ImportSummary>) {
+    fn import_done(&self, summary: Result<ImportSummary, db::Error>) {
         self.ui().set_importing(false);
         self.reload_all();
         match summary {
             Ok(s) => self.toast(import_message(&s)),
-            Err(e) => self.toast(tr!("Import failed: {}", format!("{e:#}"))),
+            Err(e) => self.toast(tr!("Import failed: {}", chain(&e))),
         }
     }
 
@@ -1263,7 +1261,7 @@ impl App {
                     name
                 ));
             }
-            Err(e) => self.report(tr!("Couldn't export"), e),
+            Err(e) => self.report(tr!("Couldn't export"), e.as_ref()),
         }
     }
 
@@ -1373,7 +1371,7 @@ impl App {
         let remote = match result {
             Ok(r) => r,
             Err(e) => {
-                return self.sync_note(&capitalize(&format!("{:#}", anyhow::Error::from(e))), true);
+                return self.sync_note(&capitalize(&chain(&e)), true);
             }
         };
         if remote.schema > SCHEMA_VERSION {
@@ -1387,7 +1385,7 @@ impl App {
         }
         let ours = match self.store.stats() {
             Ok(s) => s,
-            Err(e) => return self.report(tr!("Couldn't read this computer's sources"), e),
+            Err(e) => return self.report(tr!("Couldn't read this computer's sources"), &e),
         };
         self.sync_note("", false);
         let detail = tr!(
@@ -1431,11 +1429,7 @@ impl App {
         let stats = match result {
             Ok(s) => s,
             Err(e) => {
-                let msg = tr!(
-                    "Couldn't pull from {}: {}",
-                    name,
-                    format!("{:#}", anyhow::Error::from(e))
-                );
+                let msg = tr!("Couldn't pull from {}: {}", name, chain(&e));
                 self.sync_note(&msg, true);
                 return self.toast(msg);
             }
@@ -1477,7 +1471,7 @@ impl App {
             .store
             .set_setting("refresh_interval", &next.to_string())
         {
-            self.report(tr!("Couldn't save the refresh interval"), e);
+            self.report(tr!("Couldn't save the refresh interval"), &e);
         }
     }
 
@@ -1520,7 +1514,7 @@ impl App {
         self.zoom.set(percent);
         ui.set_zoom_percent(percent as i32);
         if let Err(e) = self.store.set_setting("zoom", &percent.to_string()) {
-            self.report(tr!("Couldn't save the zoom level"), e);
+            self.report(tr!("Couldn't save the zoom level"), &e);
         }
     }
 
@@ -1556,7 +1550,7 @@ impl App {
             ui.set_reader(info);
         }
         if let Err(e) = self.store.set_setting("language", lang.code()) {
-            self.report(tr!("Couldn't save the language"), e);
+            self.report(tr!("Couldn't save the language"), &e);
         }
     }
 
@@ -1901,10 +1895,10 @@ mod tests {
         app.open_article(row_of(&app, "Story 0"));
         let id = ui.get_reader().id as i64;
 
-        let offline = anyhow::Error::new(fetch::Error::Unreachable {
+        let offline = fetch::Error::Unreachable {
             url: "http://127.0.0.1:9/story/0".into(),
             source: ureq::Error::HostNotFound,
-        });
+        };
         app.page_ready(id, Err(offline));
         assert!(!ui.get_reader_loading());
         assert!(ui.get_reader_note().contains("offline"));

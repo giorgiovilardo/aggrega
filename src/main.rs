@@ -3,6 +3,7 @@
 
 mod app;
 mod db;
+mod error;
 mod feed;
 mod fetch;
 mod html;
