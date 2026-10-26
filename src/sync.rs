@@ -580,6 +580,13 @@ fn temp_path(dir: &Path, what: &str) -> PathBuf {
     dir.join(format!("aggrega-{what}-{}-{n}.db", std::process::id()))
 }
 
+/// Held by every test that binds UDP ports, so none can take a port another test just found free.
+#[cfg(test)]
+pub(crate) fn udp_ports() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,6 +666,7 @@ mod tests {
 
     #[test]
     fn pulls_another_database_over_tcp() -> Result<(), Error> {
+        let _udp = udp_ports();
         let dir = temp_dir("pull");
         let theirs = dir.path().join("theirs.db");
         let store = Store::open(&theirs)?;
@@ -697,6 +705,7 @@ mod tests {
 
     #[test]
     fn hears_beacons_but_not_its_own() {
+        let _udp = udp_ports();
         let dir = temp_dir("beacon");
         let db = dir.path().join("a.db");
         Store::open(&db).unwrap();
@@ -733,6 +742,7 @@ mod tests {
 
     #[test]
     fn refuses_other_protocols() {
+        let _udp = udp_ports();
         let dir = temp_dir("protocol");
         let db = dir.path().join("a.db");
         Store::open(&db).unwrap();
@@ -818,6 +828,7 @@ mod tests {
 
     #[test]
     fn reports_a_beacon_port_in_use() {
+        let _udp = udp_ports();
         let dir = temp_dir("busy");
         let db = dir.path().join("a.db");
         Store::open(&db).unwrap();

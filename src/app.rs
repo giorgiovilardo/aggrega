@@ -2282,6 +2282,7 @@ mod tests {
 
     #[test]
     fn settings_open_from_the_sidebar_and_switch_tabs() {
+        let _udp = sync::udp_ports();
         let (ui, _app, dir) = start("settings");
         let button = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
@@ -2332,6 +2333,7 @@ mod tests {
 
     #[test]
     fn sync_runs_only_while_its_tab_is_open() {
+        let _udp = sync::udp_ports();
         let (ui, app, _dir) = start("sync-tab");
         let button = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
@@ -2371,6 +2373,7 @@ mod tests {
 
     #[test]
     fn refresh_interval_steps_between_limits_and_is_saved() {
+        let _udp = sync::udp_ports();
         let (ui, app, _dir) = start("interval");
         let button = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
@@ -2443,6 +2446,7 @@ mod tests {
 
     #[test]
     fn zoom_scales_the_window_and_is_saved() {
+        let _udp = sync::udp_ports();
         let (ui, app, dir) = start("zoom");
         let button = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
@@ -2568,6 +2572,7 @@ mod tests {
 
     #[test]
     fn pulling_asks_first_then_replaces_everything() {
+        let _udp = sync::udp_ports();
         let (ui, app, dir) = start("sync-pull");
         let shows = |label: &str| {
             ElementHandle::find_by_accessible_label(&ui, label)
@@ -2637,6 +2642,7 @@ mod tests {
 
     #[test]
     fn sync_explains_what_it_cannot_do() {
+        let _udp = sync::udp_ports();
         let (ui, app, _dir) = start("sync-errors");
         app.sync_active(true);
         let gen_ = app.sync_gen.get();
