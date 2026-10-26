@@ -3,22 +3,28 @@
 
 use std::collections::HashSet;
 
-use anyhow::{Result, bail};
 use html_escape::encode_double_quoted_attribute as escape;
 
 use crate::feed::Source;
 use crate::html::{self, Token};
 
+/// Why a file couldn't be read as a subscription list.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("not an OPML subscription list")]
+    NotOpml,
+}
+
 /// Every feed in `opml`, in document order, each URL once. Folders (outlines
 /// holding outlines) are flattened, and outlines without an `xmlUrl` (folders,
 /// notes, links) are skipped.
-pub fn parse(opml: &str) -> Result<Vec<Source>> {
+pub fn parse(opml: &str) -> Result<Vec<Source>, Error> {
     let tokens = html::tokenize(opml);
     if !tokens
         .iter()
         .any(|t| matches!(t, Token::Open { name, .. } if name == "opml"))
     {
-        bail!("that file isn't an OPML subscription list");
+        return Err(Error::NotOpml);
     }
     let value = |tag: &str, name: &str| {
         html::attr(tag, name)
@@ -174,8 +180,11 @@ mod tests {
 
     #[test]
     fn rejects_files_that_are_not_opml() {
-        assert!(parse("<rss><channel><title>x</title></channel></rss>").is_err());
-        assert!(parse("just some text").is_err());
+        assert!(matches!(
+            parse("<rss><channel><title>x</title></channel></rss>"),
+            Err(Error::NotOpml)
+        ));
+        assert!(matches!(parse("just some text"), Err(Error::NotOpml)));
         assert_eq!(parse("<opml><body></body></opml>").unwrap(), []);
     }
 
