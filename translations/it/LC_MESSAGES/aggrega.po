@@ -357,8 +357,8 @@ msgstr "Sei offline  ·  ecco le notizie salvate"
 msgid "You're up to date"
 msgstr "Tutto aggiornato"
 
-msgid "Refresh failed: {}"
-msgstr "Aggiornamento non riuscito: {}"
+msgid "Refresh failed"
+msgstr "Aggiornamento non riuscito"
 
 msgid "Couldn't open the article"
 msgstr "Impossibile aprire l'articolo"
@@ -405,8 +405,8 @@ msgstr "Impossibile importare"
 msgid "No sources found in that file"
 msgstr "Nessuna fonte trovata in quel file"
 
-msgid "Import failed: {}"
-msgstr "Importazione non riuscita: {}"
+msgid "Import failed"
+msgstr "Importazione non riuscita"
 
 msgid "Export sources"
 msgstr "Esporta fonti"
@@ -594,3 +594,105 @@ msgid "{n} match"
 msgid_plural "{n} matches"
 msgstr[0] "{n} risultato"
 msgstr[1] "{n} risultati"
+
+msgid "Couldn't read {}"
+msgstr "Impossibile leggere {}"
+
+msgid "Couldn't write {}"
+msgstr "Impossibile scrivere {}"
+
+msgid "please enter an address"
+msgstr "inserisci un indirizzo"
+
+msgid "that doesn't look like a valid address"
+msgstr "non sembra un indirizzo valido"
+
+msgid "only http and https addresses are supported"
+msgstr "sono supportati solo indirizzi http e https"
+
+msgid "{} took too long to answer"
+msgstr "{} ha impiegato troppo tempo a rispondere"
+
+msgid "{} wasn't found. Check the address"
+msgstr "{} non è stato trovato. Controlla l'indirizzo"
+
+msgid "couldn't connect to {}"
+msgstr "impossibile connettersi a {}"
+
+msgid "the request to {} failed"
+msgstr "la richiesta a {} non è riuscita"
+
+msgid "{} refused access (HTTP {})"
+msgstr "{} ha negato l'accesso (HTTP {})"
+
+msgid "there's nothing at that address on {} (HTTP {})"
+msgstr "a quell'indirizzo su {} non c'è niente (HTTP {})"
+
+msgid "{} has a problem right now (HTTP {})"
+msgstr "{} ha un problema in questo momento (HTTP {})"
+
+msgid "{} answered HTTP {}"
+msgstr "{} ha risposto con HTTP {}"
+
+msgid "{} sent more than Aggrega accepts"
+msgstr "{} ha inviato più di quanto Aggrega accetti"
+
+msgid "the feed at {} couldn't be read"
+msgstr "impossibile leggere il feed di {}"
+
+msgid "couldn't find an RSS, Atom or JSON feed at that address"
+msgstr "non è stato trovato nessun feed RSS, Atom o JSON a quell'indirizzo"
+
+msgid "you're already following this source"
+msgstr "segui già questa fonte"
+
+msgid "it was made by a newer version of Aggrega. Update this one first"
+msgstr "è stato creato da una versione più recente di Aggrega. Aggiorna prima questa versione"
+
+msgid "it isn't an Aggrega database"
+msgstr "non è un database di Aggrega"
+
+msgid "the database is damaged"
+msgstr "il database è danneggiato"
+
+msgid "the file's location contains unsupported characters"
+msgstr "il percorso del file contiene caratteri non supportati"
+
+msgid "database error: {}"
+msgstr "errore del database: {}"
+
+msgid "that file isn't an OPML subscription list"
+msgstr "questo file non è un elenco di iscrizioni OPML"
+
+msgid "enter the other computer's address"
+msgstr "inserisci l'indirizzo dell'altro computer"
+
+msgid "couldn't find “{}” on the network"
+msgstr "impossibile trovare “{}” sulla rete"
+
+msgid "{} isn't accepting connections. Is Aggrega's Sync tab open there?"
+msgstr "{} non accetta connessioni. La scheda Sincronizzazione di Aggrega è aperta lì?"
+
+msgid "couldn't reach {}. Is it on the same network?"
+msgstr "impossibile raggiungere {}. È sulla stessa rete?"
+
+msgid "the connection to {} was lost"
+msgstr "la connessione con {} si è interrotta"
+
+msgid "{} didn't answer like Aggrega does"
+msgstr "{} non risponde come Aggrega"
+
+msgid "{} runs an incompatible version of Aggrega"
+msgstr "{} usa una versione di Aggrega incompatibile"
+
+msgid "{} reported a problem: {}"
+msgstr "{} ha segnalato un problema: {}"
+
+msgid "the database is too large to receive"
+msgstr "il database è troppo grande per essere ricevuto"
+
+msgid "the connection dropped before the whole database arrived"
+msgstr "la connessione è caduta prima che arrivasse l'intero database"
+
+msgid "couldn't save the received database: {}"
+msgstr "impossibile salvare il database ricevuto: {}"

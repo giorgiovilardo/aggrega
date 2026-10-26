@@ -3,7 +3,7 @@
 //! an operation in `ops` can fail in more than one place. This is what the
 //! future `aggrega_core` crate will export as its error type.
 
-use crate::{db, fetch, opml, sync};
+use crate::{db, fetch, opml};
 
 /// Why an operation failed, from whichever module it was.
 #[derive(Debug, thiserror::Error)]
@@ -14,20 +14,6 @@ pub enum Error {
     Opml(#[from] opml::Error),
     #[error(transparent)]
     Db(#[from] db::Error),
-    #[error(transparent)]
-    Sync(#[from] sync::Error),
-}
-
-impl Error {
-    /// The server or the other computer couldn't be reached at all, which says nothing about it.
-    #[allow(dead_code)] // Not called outside the tests yet; frontends will match on it.
-    pub fn is_unreachable(&self) -> bool {
-        matches!(
-            self,
-            Self::Fetch(fetch::Error::Unreachable { .. })
-                | Self::Sync(sync::Error::Unreachable { .. })
-        )
-    }
 }
 
 /// `err` and its sources joined by ": ", for logs (what anyhow's `{:#}` printed).
@@ -47,7 +33,6 @@ pub fn chain(err: &dyn std::error::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io;
 
     /// Propagates `err` with `?`, as an operation does.
     fn lift<E>(err: E) -> Result<(), Error>
@@ -72,55 +57,13 @@ mod tests {
             lift(db::Error::NotAnAggregaDatabase).unwrap_err(),
             Error::Db(db::Error::NotAnAggregaDatabase)
         ));
-        assert!(matches!(
-            lift(sync::Error::EmptyAddress).unwrap_err(),
-            Error::Sync(sync::Error::EmptyAddress)
-        ));
-    }
-
-    #[test]
-    fn a_server_or_computer_that_cant_be_reached_is_unreachable() {
-        let server: Error = fetch::Error::Unreachable {
-            url: "https://example.org/feed.xml".into(),
-            source: ureq::Error::HostNotFound,
-        }
-        .into();
-        let computer: Error = sync::Error::Unreachable {
-            addr: "192.168.1.5:7000".parse().unwrap(),
-            source: io::Error::from(io::ErrorKind::ConnectionRefused),
-        }
-        .into();
-
-        assert!(server.is_unreachable());
-        assert!(computer.is_unreachable());
-    }
-
-    #[test]
-    fn failures_after_connecting_are_not_unreachable() {
-        let errors: [Error; 4] = [
-            fetch::Error::Status {
-                url: "https://example.org/feed.xml".into(),
-                status: 404,
-            }
-            .into(),
-            sync::Error::Connection {
-                addr: "192.168.1.5:7000".parse().unwrap(),
-                source: io::Error::from(io::ErrorKind::ConnectionReset),
-            }
-            .into(),
-            db::Error::NotAnAggregaDatabase.into(),
-            opml::Error::NotOpml.into(),
-        ];
-
-        for err in &errors {
-            assert!(!err.is_unreachable(), "{err}");
-        }
     }
 
     #[test]
     fn chain_joins_an_error_and_its_source() {
         let err = fetch::Error::Unreachable {
             url: "http://127.0.0.1:9/feed.xml".into(),
+            why: fetch::Offline::HostNotFound,
             source: ureq::Error::HostNotFound,
         };
 

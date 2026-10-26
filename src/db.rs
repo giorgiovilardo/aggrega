@@ -783,6 +783,7 @@ mod tests {
         let before = store.articles(ArticleFilter::default(), 10)?.len();
         let offline = fetch::Error::Unreachable {
             url: "http://127.0.0.1:9/".into(),
+            why: fetch::Offline::HostNotFound,
             source: ureq::Error::HostNotFound,
         };
         let s = store.apply_refresh(vec![FeedRefresh {

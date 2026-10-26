@@ -9,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use slint::{
     ComponentHandle, Model, ModelRc, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString,
     VecModel,
@@ -19,6 +19,7 @@ use crate::db::{self, Article, ArticleFilter, RefreshSummary, SCHEMA_VERSION, St
 use crate::error::{self, chain};
 use crate::fetch;
 use crate::i18n::{self, Lang, tr, trn};
+use crate::opml;
 use crate::ops::{self, AddedSource, Core, ImportSummary};
 use crate::profile::Paths;
 use crate::reader::{self, Block, Kind};
@@ -272,10 +273,11 @@ impl App {
         self.ui().invoke_show_toast(msg.into());
     }
 
-    /// `what` is already translated; the error itself stays as it came.
-    fn report(&self, what: String, err: &dyn std::error::Error) {
+    /// `what` is already translated. The log gets the English causes; the
+    /// toast gets the message in the interface language.
+    fn report(&self, what: String, err: &(impl Describe + std::error::Error)) {
         eprintln!("aggrega: {what}: {}", chain(err));
-        self.toast(format!("{what}: {err}"));
+        self.toast(format!("{what}: {}", err.describe()));
     }
 
     // ---- view state ------------------------------------------------------
@@ -649,7 +651,7 @@ impl App {
                 }
                 self.toast(msg);
             }
-            Err(e) => self.toast(tr!("Refresh failed: {}", chain(&e))),
+            Err(e) => self.report(tr!("Refresh failed"), &e),
         }
     }
 
@@ -1154,11 +1156,8 @@ impl App {
                 ));
             }
             Err(e) => {
-                let mut e = chain(&e);
-                if let Some(first) = e.get_mut(0..1) {
-                    first.make_ascii_uppercase();
-                }
-                ui.set_add_error(e.into());
+                eprintln!("aggrega: couldn't add the source: {}", chain(&e));
+                ui.set_add_error(capitalize(&e.describe()).into());
             }
         }
     }
@@ -1198,11 +1197,12 @@ impl App {
     /// Subscribes, in the background, to every source in the OPML file at
     /// `path` that isn't followed yet.
     fn import_file(&self, path: &Path) {
-        let text = match std::fs::read(path)
-            .with_context(|| format!("couldn't read {}", path.display()))
-        {
+        let text = match std::fs::read(path) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(e) => return self.report(tr!("Couldn't import"), e.as_ref()),
+            Err(e) => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                return self.report(tr!("Couldn't read {}", name), &e);
+            }
         };
         let plan = match ops::plan_import(&self.store, &text) {
             Ok(p) => p,
@@ -1237,7 +1237,7 @@ impl App {
         self.reload_all();
         match summary {
             Ok(s) => self.toast(import_message(&s)),
-            Err(e) => self.toast(tr!("Import failed: {}", chain(&e))),
+            Err(e) => self.report(tr!("Import failed"), &e),
         }
     }
 
@@ -1251,25 +1251,20 @@ impl App {
         else {
             return;
         };
-        match self.export_to(&path) {
-            Ok(n) => {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                self.toast(trn!(
-                    n,
-                    "Exported {n} source to {}",
-                    "Exported {n} sources to {}",
-                    name
-                ));
-            }
-            Err(e) => self.report(tr!("Couldn't export"), e.as_ref()),
+        let (doc, count) = match ops::export_opml(&self.store) {
+            Ok(exported) => exported,
+            Err(e) => return self.report(tr!("Couldn't export"), &e),
+        };
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        match std::fs::write(&path, doc) {
+            Ok(()) => self.toast(trn!(
+                count,
+                "Exported {n} source to {}",
+                "Exported {n} sources to {}",
+                name
+            )),
+            Err(e) => self.report(tr!("Couldn't write {}", name), &e),
         }
-    }
-
-    /// Writes every source to `path` as OPML; returns how many.
-    fn export_to(&self, path: &Path) -> Result<usize> {
-        let (doc, count) = ops::export_opml(&self.store)?;
-        std::fs::write(path, doc).with_context(|| format!("couldn't write {}", path.display()))?;
-        Ok(count)
     }
 
     // ---- sync ----------------------------------------------------------------
@@ -1312,7 +1307,7 @@ impl App {
         };
         ui.set_sync_device(device.into());
         if !session.problems.is_empty() && !self.pulling.get() {
-            let problems: Vec<_> = session.problems.iter().map(problem_message).collect();
+            let problems: Vec<_> = session.problems.iter().map(Describe::describe).collect();
             self.sync_note(&problems.join(" "), true);
         }
         self.sync.replace(Some(session));
@@ -1371,7 +1366,11 @@ impl App {
         let remote = match result {
             Ok(r) => r,
             Err(e) => {
-                return self.sync_note(&capitalize(&chain(&e)), true);
+                eprintln!(
+                    "aggrega: couldn't connect to another computer: {}",
+                    chain(&e)
+                );
+                return self.sync_note(&capitalize(&e.describe()), true);
             }
         };
         if remote.schema > SCHEMA_VERSION {
@@ -1390,8 +1389,8 @@ impl App {
         self.sync_note("", false);
         let detail = tr!(
             "Its {} will replace the {} on this computer. This can't be undone.",
-            describe(remote.stats, true),
-            describe(ours, false),
+            describe_stats(remote.stats, true),
+            describe_stats(ours, false),
         );
         self.sync_pending
             .replace(Some((remote.addr, remote.name.clone())));
@@ -1429,7 +1428,8 @@ impl App {
         let stats = match result {
             Ok(s) => s,
             Err(e) => {
-                let msg = tr!("Couldn't pull from {}: {}", name, chain(&e));
+                eprintln!("aggrega: couldn't pull from {name}: {}", chain(&e));
+                let msg = tr!("Couldn't pull from {}: {}", name, e.describe());
                 self.sync_note(&msg, true);
                 return self.toast(msg);
             }
@@ -1449,7 +1449,7 @@ impl App {
                 .and_then(|v| v.parse().ok()),
         );
         self.reload_all();
-        let msg = tr!("Pulled {} from {}", describe(stats, false), name);
+        let msg = tr!("Pulled {} from {}", describe_stats(stats, false), name);
         self.sync_note(&msg, false);
         self.toast(msg);
     }
@@ -1620,7 +1620,7 @@ fn new_articles(n: usize) -> String {
 }
 
 /// "3 sources and 120 articles", optionally with "(12 unread)".
-fn describe(s: Stats, unread: bool) -> String {
+fn describe_stats(s: Stats, unread: bool) -> String {
     let mut text = tr!(
         "{} and {}",
         trn!(s.feeds, "{n} source", "{n} sources"),
@@ -1633,24 +1633,171 @@ fn describe(s: Stats, unread: bool) -> String {
     text
 }
 
-/// What a sync problem says, in the interface language.
-fn problem_message(problem: &sync::Problem) -> String {
-    match problem {
-        sync::Problem::CantServe(e) => tr!("Other computers can't pull from this one: {}", e),
-        sync::Problem::BeaconPortInUse(port) => tr!(
-            "Can't look for other computers: port {} is in use. Enter an address instead.",
-            port
-        ),
-        sync::Problem::CantDiscover(e) => tr!("Can't look for other computers: {}", e),
-    }
-}
-
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     chars
         .next()
         .map(|c| c.to_uppercase().chain(chars).collect())
         .unwrap_or_default()
+}
+
+/// A failure as the user reads it: translated, so built on the UI thread.
+trait Describe {
+    fn describe(&self) -> String;
+}
+
+/// The host of `url` for messages, or the URL itself if it doesn't parse.
+fn host_or_url(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned())
+}
+
+impl Describe for fetch::Error {
+    fn describe(&self) -> String {
+        match self {
+            Self::EmptyAddress => tr!("please enter an address"),
+            Self::InvalidAddress { .. } => tr!("that doesn't look like a valid address"),
+            Self::UnsupportedScheme { .. } => tr!("only http and https addresses are supported"),
+            Self::Unreachable { url, why, .. } => {
+                let host = host_or_url(url);
+                match why {
+                    fetch::Offline::TimedOut => tr!("{} took too long to answer", host),
+                    fetch::Offline::HostNotFound => tr!("{} wasn't found. Check the address", host),
+                    fetch::Offline::NoConnection => tr!("couldn't connect to {}", host),
+                }
+            }
+            Self::Request { url, .. } => tr!("the request to {} failed", host_or_url(url)),
+            Self::Status { url, status } => {
+                let host = host_or_url(url);
+                match *status {
+                    401 | 403 => tr!("{} refused access (HTTP {})", host, status),
+                    404 | 410 => {
+                        tr!(
+                            "there's nothing at that address on {} (HTTP {})",
+                            host,
+                            status
+                        )
+                    }
+                    500..=599 => tr!("{} has a problem right now (HTTP {})", host, status),
+                    _ => tr!("{} answered HTTP {}", host, status),
+                }
+            }
+            Self::TooLarge { url, .. } => {
+                tr!("{} sent more than Aggrega accepts", host_or_url(url))
+            }
+            Self::Feed { url, .. } => tr!("the feed at {} couldn't be read", host_or_url(url)),
+            Self::NoFeed { .. } => {
+                tr!("couldn't find an RSS, Atom or JSON feed at that address")
+            }
+        }
+    }
+}
+
+impl Describe for db::Error {
+    fn describe(&self) -> String {
+        match self {
+            Self::AlreadyFollowing { .. } => tr!("you're already following this source"),
+            Self::NewerSchema { .. } => {
+                tr!("it was made by a newer version of Aggrega. Update this one first")
+            }
+            Self::NotAnAggregaDatabase => tr!("it isn't an Aggrega database"),
+            Self::Damaged { .. } | Self::Corrupt(..) => tr!("the database is damaged"),
+            Self::NonUtf8Path { .. } => tr!("the file's location contains unsupported characters"),
+            Self::Sqlite(e) => tr!("database error: {}", e),
+        }
+    }
+}
+
+impl Describe for opml::Error {
+    fn describe(&self) -> String {
+        match self {
+            Self::NotOpml => tr!("that file isn't an OPML subscription list"),
+        }
+    }
+}
+
+impl Describe for sync::Error {
+    fn describe(&self) -> String {
+        match self {
+            Self::EmptyAddress => tr!("enter the other computer's address"),
+            Self::NotFound { input, .. } => tr!("couldn't find “{}” on the network", input),
+            Self::Unreachable { addr, source } => {
+                let addr = sync::display_addr(*addr);
+                if source.kind() == std::io::ErrorKind::ConnectionRefused {
+                    tr!(
+                        "{} isn't accepting connections. Is Aggrega's Sync tab open there?",
+                        addr
+                    )
+                } else {
+                    tr!("couldn't reach {}. Is it on the same network?", addr)
+                }
+            }
+            Self::Connection { addr, .. } => {
+                tr!("the connection to {} was lost", sync::display_addr(*addr))
+            }
+            Self::UnexpectedAnswer { addr } => {
+                tr!(
+                    "{} didn't answer like Aggrega does",
+                    sync::display_addr(*addr)
+                )
+            }
+            Self::Incompatible { addr } => {
+                tr!(
+                    "{} runs an incompatible version of Aggrega",
+                    sync::display_addr(*addr)
+                )
+            }
+            Self::Remote { addr, message } => {
+                tr!(
+                    "{} reported a problem: {}",
+                    sync::display_addr(*addr),
+                    message
+                )
+            }
+            Self::TooLarge { .. } => tr!("the database is too large to receive"),
+            Self::Truncated { .. } => {
+                tr!("the connection dropped before the whole database arrived")
+            }
+            Self::Save { source, .. } => {
+                tr!("couldn't save the received database: {}", source.describe())
+            }
+            Self::Db(e) => e.describe(),
+        }
+    }
+}
+
+impl Describe for sync::Problem {
+    fn describe(&self) -> String {
+        match self {
+            Self::CantServe(e) => {
+                tr!("Other computers can't pull from this one: {}", e.describe())
+            }
+            Self::BeaconPortInUse(port) => tr!(
+                "Can't look for other computers: port {} is in use. Enter an address instead.",
+                port
+            ),
+            Self::CantDiscover(e) => tr!("Can't look for other computers: {}", e.describe()),
+        }
+    }
+}
+
+impl Describe for error::Error {
+    fn describe(&self) -> String {
+        match self {
+            Self::Fetch(e) => e.describe(),
+            Self::Opml(e) => e.describe(),
+            Self::Db(e) => e.describe(),
+        }
+    }
+}
+
+/// Local file errors: the OS's own text, which can't be translated.
+impl Describe for std::io::Error {
+    fn describe(&self) -> String {
+        self.to_string()
+    }
 }
 
 /// The pictures among `blocks`.
@@ -1694,7 +1841,6 @@ mod tests {
 
     use super::*;
     use crate::feed::{Fetched, NewArticle, Source};
-    use crate::opml;
     use crate::setup;
     use i_slint_backend_testing::{self as testing, AccessibleRole, ElementHandle};
     use slint::platform::{Key, WindowEvent};
@@ -1895,10 +2041,12 @@ mod tests {
         app.open_article(row_of(&app, "Story 0"));
         let id = ui.get_reader().id as i64;
 
-        let offline = fetch::Error::Unreachable {
-            url: "http://127.0.0.1:9/story/0".into(),
-            source: ureq::Error::HostNotFound,
-        };
+        let offline =
+            fetch::fetch_page(app.core.agent(), "http://127.0.0.1:9/story/0").unwrap_err();
+        assert!(
+            matches!(offline, fetch::Error::Unreachable { .. }),
+            "{offline}"
+        );
         app.page_ready(id, Err(offline));
         assert!(!ui.get_reader_loading());
         assert!(ui.get_reader_note().contains("offline"));
@@ -2402,6 +2550,23 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_refresh_says_why() {
+        let (ui, app, _dir) = start("refresh-failed");
+        app.refresh_done(Err(db::Error::NewerSchema {
+            found: SCHEMA_VERSION + 1,
+        }));
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert!(
+            ElementHandle::find_by_accessible_label(
+                &ui,
+                "Refresh failed: it was made by a newer version of Aggrega. Update this one first"
+            )
+            .next()
+            .is_some()
+        );
+    }
+
+    #[test]
     fn pulling_asks_first_then_replaces_everything() {
         let (ui, app, dir) = start("sync-pull");
         let shows = |label: &str| {
@@ -2482,7 +2647,19 @@ mod tests {
         app.sync_info_ready(gen_, Err(timed_out));
         assert_eq!(
             ui.get_sync_note(),
-            "Couldn't reach 10.0.0.9:47812: timed out"
+            "Couldn't reach 10.0.0.9. Is it on the same network?"
+        );
+        assert!(ui.get_sync_note_error());
+
+        // Nothing listens there: the other computer's Sync tab is probably closed.
+        let refused = sync::Error::Unreachable {
+            addr: "10.0.0.9:47812".parse().unwrap(),
+            source: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+        };
+        app.sync_info_ready(gen_, Err(refused));
+        assert_eq!(
+            ui.get_sync_note(),
+            "10.0.0.9 isn't accepting connections. Is Aggrega's Sync tab open there?"
         );
         assert!(ui.get_sync_note_error());
 
@@ -2510,7 +2687,7 @@ mod tests {
         app.sync_active(false);
         assert_eq!(ui.get_sync_note(), "", "leaving the tab clears it");
         assert_eq!(
-            describe(
+            describe_stats(
                 Stats {
                     feeds: 1,
                     articles: 0,
@@ -2526,7 +2703,9 @@ mod tests {
     fn exports_every_source_as_opml() {
         let (_ui, app, dir) = start("export");
         let path = dir.path().join("out.opml");
-        assert_eq!(app.export_to(&path).unwrap(), 1);
+        let (doc, count) = ops::export_opml(&app.store).unwrap();
+        std::fs::write(&path, doc).unwrap();
+        assert_eq!(count, 1);
         let sources = opml::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             sources,
@@ -2554,6 +2733,25 @@ mod tests {
         app.import_file(&path);
         assert!(!ui.get_importing());
         assert_eq!(app.store.sources().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_file_that_cant_be_read_is_named_in_the_toast() {
+        let (ui, app, dir) = start("import-missing");
+        let missing = dir.path().join("missing.opml");
+        let toast = format!(
+            "Couldn't read missing.opml: {}",
+            std::fs::read(&missing).unwrap_err()
+        );
+        app.import_file(&missing);
+        testing::mock_elapsed_time(Duration::from_secs(1));
+        assert!(
+            ElementHandle::find_by_accessible_label(&ui, &toast)
+                .next()
+                .is_some(),
+            "{toast}"
+        );
+        assert!(!ui.get_importing());
     }
 
     #[test]
@@ -2610,6 +2808,30 @@ mod tests {
         assert_eq!(
             display_path(Path::new("/tmp/agg/thumbs"), None),
             "/tmp/agg/thumbs"
+        );
+    }
+
+    #[test]
+    fn failures_name_the_host_not_the_whole_address() {
+        let refused =
+            fetch::fetch_page(&fetch::agent(), "http://127.0.0.1:9/feed.xml?token=secret")
+                .unwrap_err();
+        assert_eq!(refused.describe(), "couldn't connect to 127.0.0.1");
+        let gone = fetch::Error::Status {
+            url: "https://example.org/feed.xml".into(),
+            status: 404,
+        };
+        assert_eq!(
+            gone.describe(),
+            "there's nothing at that address on example.org (HTTP 404)"
+        );
+        let unparsed = fetch::Error::Status {
+            url: "not a url".into(),
+            status: 500,
+        };
+        assert_eq!(
+            unparsed.describe(),
+            "not a url has a problem right now (HTTP 500)"
         );
     }
 
@@ -2674,6 +2896,19 @@ mod tests {
         // Unknown codes are ignored.
         with_app(|a| a.change_language("xx".into()));
         assert_eq!(ui.get_language(), "en");
+    }
+
+    #[test]
+    fn add_dialog_errors_come_in_the_interface_language() {
+        let (ui, app, _dir) = start("add-error");
+        // Nothing typed: refused before any network call.
+        app.add_done(app.core.add_source(""));
+        assert_eq!(ui.get_add_error(), "Please enter an address");
+
+        app.change_language("it".into());
+        app.add_done(app.core.add_source(""));
+        assert_eq!(ui.get_add_error(), "Inserisci un indirizzo");
+        app.change_language("en".into());
     }
 
     fn titles(app: &App) -> Vec<String> {

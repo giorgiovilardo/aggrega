@@ -38,6 +38,7 @@ pub enum Error {
     #[error("couldn't reach {url}")]
     Unreachable {
         url: String,
+        why: Offline,
         #[source]
         source: ureq::Error,
     },
@@ -68,6 +69,17 @@ pub enum Error {
         #[source]
         parse: feed::Error,
     },
+}
+
+/// Why a server couldn't be reached, as far as a frontend cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offline {
+    /// The server didn't answer in time.
+    TimedOut,
+    /// The host name didn't resolve.
+    HostNotFound,
+    /// Anything else: no network, refused connection, a dropped transfer…
+    NoConnection,
 }
 
 /// `Ok(None)` means the server answered "304 Not Modified".
@@ -122,15 +134,16 @@ impl Error {
     /// Names what went wrong with a request to `url` or reading its body.
     fn from_ureq(url: &str, source: ureq::Error) -> Self {
         let url = url.to_owned();
-        match source {
-            ureq::Error::Io(_)
-            | ureq::Error::Timeout(_)
-            | ureq::Error::HostNotFound
-            | ureq::Error::ConnectionFailed
-            | ureq::Error::BodyStalled => Self::Unreachable { url, source },
-            ureq::Error::BodyExceedsLimit(limit) => Self::TooLarge { url, limit },
-            source => Self::Request { url, source },
-        }
+        let why = match source {
+            ureq::Error::Timeout(_) => Offline::TimedOut,
+            ureq::Error::HostNotFound => Offline::HostNotFound,
+            ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::BodyStalled => {
+                Offline::NoConnection
+            }
+            ureq::Error::BodyExceedsLimit(limit) => return Self::TooLarge { url, limit },
+            source => return Self::Request { url, source },
+        };
+        Self::Unreachable { url, why, source }
     }
 }
 
@@ -357,6 +370,41 @@ mod tests {
         };
         let err = fetch_feed(&agent(), &job).unwrap_err();
         assert!(matches!(err, Error::Unreachable { .. }), "{err}");
+    }
+
+    #[test]
+    fn ureq_errors_say_what_went_wrong() {
+        let url = "http://x.org/feed";
+        let timed_out = ureq::Error::Timeout(ureq::Timeout::Global);
+        assert!(matches!(
+            Error::from_ureq(url, timed_out),
+            Error::Unreachable {
+                why: Offline::TimedOut,
+                ..
+            }
+        ));
+        assert!(matches!(
+            Error::from_ureq(url, ureq::Error::HostNotFound),
+            Error::Unreachable {
+                why: Offline::HostNotFound,
+                ..
+            }
+        ));
+        assert!(matches!(
+            Error::from_ureq(url, ureq::Error::ConnectionFailed),
+            Error::Unreachable {
+                why: Offline::NoConnection,
+                ..
+            }
+        ));
+        assert!(matches!(
+            Error::from_ureq(url, ureq::Error::BodyExceedsLimit(10)),
+            Error::TooLarge { limit: 10, .. }
+        ));
+        assert!(matches!(
+            Error::from_ureq(url, ureq::Error::TooManyRedirects),
+            Error::Request { .. }
+        ));
     }
 
     #[test]
