@@ -123,7 +123,7 @@ aggrega/
 ├── ui/
 │   ├── app.slint       # main window
 │   ├── theme.slint     # fonts, design tokens (light/dark), icon set
-│   ├── widgets.slint   # buttons, tabs, switch, window controls…
+│   ├── widgets.slint   # buttons, tabs, switch, text input, window controls…
 │   ├── sidebar.slint   # sources list
 │   ├── article-card.slint
 │   ├── reader.slint    # in-app reader view

@@ -1,5 +1,5 @@
 import { Theme, Icons, Fonts } from "theme.slint";
-import { GhostButton, PrimaryButton } from "widgets.slint";
+import { GhostButton, LineInput, PrimaryButton } from "widgets.slint";
 
 // Shared modal chrome: dimmed backdrop + paper card that rises and fades in.
 export component Modal inherits Rectangle {
@@ -109,13 +109,13 @@ export component AddSourceDialog inherits Rectangle {
     public function open() {
         self.shown = true;
         input.text = "";
-        input.focus();
+        input.focus-input();
     }
 
     public function close() {
         if (self.shown) {
             self.shown = false;
-            input.clear-focus();
+            input.clear-input-focus();
             self.closed();
         }
     }
@@ -156,44 +156,12 @@ export component AddSourceDialog inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                     colorize: input.has-focus ? Theme.accent : Theme.text-faint;
                 }
-                Rectangle {
+                input := LineInput {
                     horizontal-stretch: 1;
-                    Text {
-                        x: 0;
-                        text: @tr("e.g. theverge.com or https://example.com/feed.xml");
-                        color: Theme.text-faint;
-                        font-family: Fonts.serif;
-                        font-italic: true;
-                        font-size: 15.5px;
-                        visible: input.text == "";
-                    }
-                    flick := Flickable {
-                        width: parent.width;
-                        height: parent.height;
-                        interactive: false;
-                        content-width: max(self.width, input.preferred-width + 4px);
-
-                        input := TextInput {
-                            width: max(flick.width, self.preferred-width + 4px);
-                            height: flick.height;
-                            vertical-alignment: center;
-                            single-line: true;
-                            font-family: Fonts.serif;
-                            font-size: 15.5px;
-                            color: Theme.ink;
-                            selection-background-color: Theme.accent-soft;
-                            selection-foreground-color: Theme.ink;
-                            enabled: !root.busy;
-                            accepted => { root.do-submit(); }
-                            cursor-position-changed(pos) => {
-                                if (pos.x + flick.content-x < 0px) {
-                                    flick.content-x = -pos.x;
-                                } else if (pos.x + flick.content-x > flick.width - 2px) {
-                                    flick.content-x = -pos.x + flick.width - 2px;
-                                }
-                            }
-                        }
-                    }
+                    placeholder: @tr("e.g. theverge.com or https://example.com/feed.xml");
+                    font-size: 15.5px;
+                    enabled: !root.busy;
+                    accepted => { root.do-submit(); }
                 }
             }
         }

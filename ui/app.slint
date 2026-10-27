@@ -1,7 +1,7 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
 import { ArticleItem, FeedItem, BlockKind, ReaderBlock, ReaderInfo, SyncPeer } from "types.slint";
-import { EmptyState, IconButton, MacWindowControls, Tabs, WindowControls } from "widgets.slint";
+import { EmptyState, IconButton, LineInput, MacWindowControls, Tabs, WindowControls } from "widgets.slint";
 import { Sidebar } from "sidebar.slint";
 import { ArticleCard } from "article-card.slint";
 import { AddSourceDialog, ConfirmRemoveDialog, ConfirmSyncDialog } from "dialogs.slint";
@@ -190,7 +190,7 @@ export component AppWindow inherits Window {
     // first so the list being searched is in view.
     function focus-search() {
         self.hide-reader();
-        search-input.focus();
+        search-input.focus-input();
     }
 
     function clear-search() {
@@ -451,46 +451,12 @@ export component AppWindow inherits Window {
                                                 y: (parent.height - self.height) / 2;
                                                 colorize: root.search-focused ? Theme.accent : Theme.text-faint;
                                             }
-                                            Rectangle {
+                                            search-input := LineInput {
                                                 horizontal-stretch: 1;
-                                                Text {
-                                                    x: 0;
-                                                    height: parent.height;
-                                                    vertical-alignment: center;
-                                                    text: @tr("Search");
-                                                    color: Theme.text-faint;
-                                                    font-family: Fonts.serif;
-                                                    font-italic: true;
-                                                    font-size: 14px;
-                                                    visible: search-input.text == "";
-                                                }
-                                                search-flick := Flickable {
-                                                    width: parent.width;
-                                                    height: parent.height;
-                                                    interactive: false;
-                                                    content-width: max(self.width, search-input.preferred-width + 4px);
-
-                                                    search-input := TextInput {
-                                                        width: max(search-flick.width, self.preferred-width + 4px);
-                                                        height: search-flick.height;
-                                                        vertical-alignment: center;
-                                                        single-line: true;
-                                                        font-family: Fonts.serif;
-                                                        font-size: 14px;
-                                                        color: Theme.ink;
-                                                        selection-background-color: Theme.accent-soft;
-                                                        selection-foreground-color: Theme.ink;
-                                                        text <=> root.search-text;
-                                                        edited => { root.search-changed(); }
-                                                        cursor-position-changed(pos) => {
-                                                            if (pos.x + search-flick.content-x < 0px) {
-                                                                search-flick.content-x = -pos.x;
-                                                            } else if (pos.x + search-flick.content-x > search-flick.width - 2px) {
-                                                                search-flick.content-x = -pos.x + search-flick.width - 2px;
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                                placeholder: @tr("Search");
+                                                font-size: 14px;
+                                                text <=> root.search-text;
+                                                edited => { root.search-changed(); }
                                             }
                                             if root.search-text != "": IconButton {
                                                 y: (parent.height - self.height) / 2;
@@ -499,7 +465,7 @@ export component AppWindow inherits Window {
                                                 icon: Icons.x;
                                                 label: @tr("Clear search");
                                                 clicked => {
-                                                    search-input.focus();
+                                                    search-input.focus-input();
                                                     root.clear-search();
                                                 }
                                             }

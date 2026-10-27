@@ -428,6 +428,71 @@ export component Badge inherits Rectangle {
     }
 }
 
+// Single-line text field. Long text scrolls to follow the cursor instead of
+// running out of its box, and the italic placeholder shows while it's empty.
+// The box, border and icon belong to the caller.
+export component LineInput inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> input.text;
+    in property <length> font-size: 14px;
+    in property <bool> enabled: true;
+    // Spoken by screen readers.
+    in property <string> label;
+    out property <bool> has-focus: input.has-focus;
+    callback accepted();
+    callback edited();
+
+    public function focus-input() {
+        input.focus();
+    }
+
+    public function clear-input-focus() {
+        input.clear-focus();
+    }
+
+    Text {
+        x: 0;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Theme.text-faint;
+        font-family: Fonts.serif;
+        font-italic: true;
+        font-size: root.font-size;
+        visible: input.text == "";
+    }
+
+    flick := Flickable {
+        width: parent.width;
+        height: parent.height;
+        interactive: false;
+        content-width: max(self.width, input.preferred-width + 4px);
+
+        input := TextInput {
+            width: max(flick.width, self.preferred-width + 4px);
+            height: flick.height;
+            vertical-alignment: center;
+            single-line: true;
+            font-family: Fonts.serif;
+            font-size: root.font-size;
+            color: Theme.ink;
+            selection-background-color: Theme.accent-soft;
+            selection-foreground-color: Theme.ink;
+            enabled: root.enabled;
+            accessible-label: root.label;
+            accepted => { root.accepted(); }
+            edited => { root.edited(); }
+            cursor-position-changed(pos) => {
+                if (pos.x + flick.content-x < 0px) {
+                    flick.content-x = -pos.x;
+                } else if (pos.x + flick.content-x > flick.width - 2px) {
+                    flick.content-x = -pos.x + flick.width - 2px;
+                }
+            }
+        }
+    }
+}
+
 export component EmptyState inherits VerticalLayout {
     in property <string> kicker;
     in property <string> title;

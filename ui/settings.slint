@@ -1,6 +1,6 @@
 import { AboutSlint, ScrollView } from "std-widgets.slint";
 import { Theme, Icons, Fonts } from "theme.slint";
-import { GhostButton, IconButton, PrimaryButton } from "widgets.slint";
+import { GhostButton, IconButton, LineInput, PrimaryButton } from "widgets.slint";
 import { DialogHeader, Modal } from "dialogs.slint";
 import { SyncPeer } from "types.slint";
 
@@ -566,44 +566,15 @@ component SyncPane inherits VerticalLayout {
                 border-color: address.has-focus ? Theme.ink : Theme.rule;
                 animate border-color { duration: 160ms; }
 
-                Text {
-                    x: 14px;
-                    text: @tr("e.g. 192.168.1.5");
-                    vertical-alignment: center;
-                    color: Theme.text-faint;
-                    font-family: Fonts.serif;
-                    font-italic: true;
-                    font-size: 15px;
-                    visible: address.text == "";
-                }
-                flick := Flickable {
+                address := LineInput {
                     x: 14px;
                     width: parent.width - 28px;
                     height: parent.height;
-                    interactive: false;
-                    content-width: max(self.width, address.preferred-width + 4px);
-
-                    address := TextInput {
-                        width: max(flick.width, self.preferred-width + 4px);
-                        height: flick.height;
-                        vertical-alignment: center;
-                        single-line: true;
-                        accessible-label: @tr("Address of the other computer");
-                        font-family: Fonts.serif;
-                        font-size: 15px;
-                        color: Theme.ink;
-                        selection-background-color: Theme.accent-soft;
-                        selection-foreground-color: Theme.ink;
-                        enabled: !root.busy;
-                        accepted => { root.submit(); }
-                        cursor-position-changed(pos) => {
-                            if (pos.x + flick.content-x < 0px) {
-                                flick.content-x = -pos.x;
-                            } else if (pos.x + flick.content-x > flick.width - 2px) {
-                                flick.content-x = -pos.x + flick.width - 2px;
-                            }
-                        }
-                    }
+                    placeholder: @tr("e.g. 192.168.1.5");
+                    font-size: 15px;
+                    label: @tr("Address of the other computer");
+                    enabled: !root.busy;
+                    accepted => { root.submit(); }
                 }
             }
             PrimaryButton {

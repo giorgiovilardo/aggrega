@@ -2861,25 +2861,102 @@ mod tests {
         }
     }
 
+    /// The element called `name` inside the `LineInput` with call-site id `id`.
+    fn line_part(ui: &AppWindow, id: &str, name: &str) -> ElementHandle {
+        ElementHandle::find_by_element_id(ui, id)
+            .next()
+            .and_then(|line| {
+                line.query_descendants()
+                    .match_id(format!("LineInput::{name}"))
+                    .find_first()
+            })
+            .unwrap_or_else(|| panic!("{name} inside {id}"))
+    }
+
+    fn left(e: &ElementHandle) -> f32 {
+        e.absolute_position().x
+    }
+
+    fn right(e: &ElementHandle) -> f32 {
+        e.absolute_position().x + e.size().width
+    }
+
+    /// Types a long address into the `LineInput` with call-site id `id`. Checks
+    /// that the placeholder covers the text's box while the field is empty and
+    /// goes once there is text, that the text runs past the field's Flickable,
+    /// that the view follows the cursor, and that Home and End move it back and
+    /// forth.
+    fn long_text_follows_the_cursor(ui: &AppWindow, id: &str) {
+        let line = ElementHandle::find_by_element_id(ui, id)
+            .next()
+            .unwrap_or_else(|| panic!("{id} in the window"));
+        let flick = line_part(ui, id, "flick");
+        let input = line_part(ui, id, "input");
+        let centre = |e: &ElementHandle| e.absolute_position().y + e.size().height / 2.;
+        let placeholder = || {
+            line.query_descendants()
+                .match_type_name("Text")
+                .find_first()
+        };
+
+        let shown = placeholder().expect("placeholder while the field is empty");
+        assert!(
+            (centre(&shown) - centre(&input)).abs() < 0.5,
+            "placeholder centre {} vs text centre {}",
+            centre(&shown),
+            centre(&input)
+        );
+
+        let url = "https://www.gazzetta.it/dynamic-feed/rss/section/Calcio/Serie-A.xml?x=";
+        let text: String = url.repeat(2).chars().take(120).collect();
+        for c in text.chars() {
+            press(ui, c.to_string());
+        }
+        assert!(
+            placeholder().is_none(),
+            "placeholder hidden once there is text"
+        );
+
+        // A. Overflowing text: the input runs past the container, and the view
+        // is scrolled so the cursor at the end is visible.
+        assert!(
+            right(&input) >= right(&flick),
+            "text overflows: input right {} vs container right {}",
+            right(&input),
+            right(&flick)
+        );
+        assert!(
+            left(&input) < left(&flick),
+            "scrolled to the cursor: input x {} vs container x {}",
+            left(&input),
+            left(&flick)
+        );
+
+        // B. Home scrolls back to the start.
+        move_to_line_start(ui);
+        assert_eq!(left(&input), left(&flick), "Home scrolls back to the start");
+
+        // C. End, then delete 30 characters: still overflowing, so no blank gap.
+        move_to_line_end(ui);
+        for _ in 0..30 {
+            press(ui, Key::Backspace);
+        }
+        assert!(
+            right(&input) >= right(&flick) - 6.,
+            "no blank gap after deleting: input right {} vs container right {}",
+            right(&input),
+            right(&flick)
+        );
+    }
+
     #[test]
     fn long_text_in_add_source_stays_in_the_box_and_follows_the_cursor() {
-        fn left(e: &ElementHandle) -> f32 {
-            e.absolute_position().x
-        }
-        fn right(e: &ElementHandle) -> f32 {
-            e.absolute_position().x + e.size().width
-        }
-
         let (ui, _app, _dir) = start("add-source-long");
         chord(&ui, Key::Control, "n");
         testing::mock_elapsed_time(Duration::from_secs(1));
 
-        let flick = ElementHandle::find_by_element_id(&ui, "AddSourceDialog::flick")
-            .next()
-            .expect("add-source flickable");
-        let input = ElementHandle::find_by_element_id(&ui, "AddSourceDialog::input")
-            .next()
-            .expect("add-source input");
+        let flick = line_part(&ui, "AddSourceDialog::input", "flick");
+        let input = line_part(&ui, "AddSourceDialog::input", "input");
         // The bordered field is the 50px-high rectangle that wraps the flickable
         // with its 14px padding. The clip rectangle has the same height but starts
         // at the flickable's left edge, so it is excluded.
@@ -2901,51 +2978,17 @@ mod tests {
         );
         let field = &field[0];
 
-        let url = "https://www.gazzetta.it/dynamic-feed/rss/section/Calcio/Serie-A.xml?x=";
-        let text: String = url.repeat(2).chars().take(120).collect();
-        for c in text.chars() {
-            press(&ui, c.to_string());
-        }
+        long_text_follows_the_cursor(&ui, "AddSourceDialog::input");
 
-        // A. Overflowing text: the input runs past the container, the container
-        // stays inside the box (14px is the field's right padding), and the view
-        // is scrolled so the cursor at the end is visible.
-        assert!(
-            right(&input) >= right(&flick),
-            "text overflows: input right {} vs container right {}",
-            right(&input),
-            right(&flick)
-        );
+        // The container stays inside the box: 14px is the field's right padding.
         assert!(
             (right(field) - right(&flick) - 14.).abs() < 0.5,
             "container did not grow: field right {} vs container right {}",
             right(field),
             right(&flick)
         );
-        assert!(
-            left(&input) < left(&flick),
-            "scrolled to the cursor: input x {} vs container x {}",
-            left(&input),
-            left(&flick)
-        );
 
-        // B. Home scrolls back to the start.
-        move_to_line_start(&ui);
-        assert_eq!(left(&input), left(&flick), "Home scrolls back to the start");
-
-        // C. End, then delete 30 characters: still overflowing, so no blank gap.
-        move_to_line_end(&ui);
-        for _ in 0..30 {
-            press(&ui, Key::Backspace);
-        }
-        assert!(
-            right(&input) >= right(&flick) - 6.,
-            "no blank gap after deleting: input right {} vs container right {}",
-            right(&input),
-            right(&flick)
-        );
-
-        // D. Closing and reopening gives an empty field scrolled to the start.
+        // Closing and reopening gives an empty field scrolled to the start.
         ui.invoke_close_add_dialog();
         testing::mock_elapsed_time(Duration::from_secs(1));
         chord(&ui, Key::Control, "n");
@@ -2956,5 +2999,17 @@ mod tests {
             left(&flick),
             "reopened field starts at the beginning"
         );
+    }
+
+    #[test]
+    fn long_text_in_the_search_field_stays_in_the_box_and_follows_the_cursor() {
+        let (ui, _app, _dir) = start("search-long");
+        chord(&ui, Key::Control, "f");
+        long_text_follows_the_cursor(&ui, "AppWindow::search-input");
+
+        // 120 characters were typed and 30 deleted. The text reaches the search.
+        assert_eq!(ui.get_search_text().chars().count(), 90);
+        testing::mock_elapsed_time(Duration::from_millis(200));
+        assert!(ui.get_searching());
     }
 }
